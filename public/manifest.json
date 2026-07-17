@@ -1,0 +1,17 @@
+{
+  "name": "CRAK! — A tiny mahjong puzzle",
+  "short_name": "CRAK!",
+  "description": "Swipe the board and combine mahjong-inspired tiles into pairs, pungs and runs to complete a small target hand.",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#10141f",
+  "theme_color": "#1c2230",
+  "categories": ["games", "puzzle"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
