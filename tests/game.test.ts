@@ -7,7 +7,7 @@ import {
   setTarget,
 } from "@/game/state/game";
 import { reconcileTargets } from "@/game/rules/targets";
-import { isGameOver } from "@/game/rules/movement";
+import { isGameOver, hasAnyMove } from "@/game/rules/movement";
 import { makePair, makePung, makeRun } from "@/game/tiles";
 import { CELL_COUNT } from "@/types";
 import { emptyBoard } from "./helpers";
@@ -109,7 +109,7 @@ describe("hand completion", () => {
   it("advances round, bumps multiplier, cashes in the fulfilling sets, keeps loose tiles", () => {
     let s = freshState();
     const b = emptyBoard();
-    // Four completed sets satisfying pattern GATE + some loose numbers.
+    // Four completed sets satisfying pattern GATERUN + some loose numbers.
     b[0] = makePair({ suit: "dot", rank: 1 });
     b[1] = makePung({ suit: "bam", rank: 2 });
     b[2] = makeRun("crak");
@@ -118,7 +118,7 @@ describe("hand completion", () => {
     b[5] = mkLoose("bam-1");
     b[6] = mkLoose("crak-3");
     b[7] = mkLoose("dot-3");
-    const rec = reconcileTargets(setTarget(s, "GATE").target, b);
+    const rec = reconcileTargets(setTarget(s, "GATERUN").target, b);
     s = { ...s, board: rec.board, target: rec.target, status: "won-hand" };
     expect(rec.complete).toBe(true);
 
@@ -144,12 +144,29 @@ describe("hand completion", () => {
     b[1] = makePung({ suit: "bam", rank: 2 });
     b[2] = makeRun("crak");
     b[3] = makePung({ dragon: "red" });
-    const rec = reconcileTargets(setTarget(s, "GATE").target, b);
+    const rec = reconcileTargets(setTarget(s, "GATERUN").target, b);
     s = { ...s, board: rec.board, target: rec.target, status: "won-hand" };
     const result = completeHand(s);
     // Board is empty of completed sets, so the new target starts unfilled.
     const filled = result.state.target.requirements.filter((r) => r.filledBy).length;
     expect(filled).toBe(0);
+  });
+
+  it("never leaves the board empty after cashing in (no soft-lock)", () => {
+    // A board that is ENTIRELY the four scoring sets — cashing them in would
+    // empty the board and dead-lock the game without a top-up.
+    let s = freshState();
+    const b = emptyBoard();
+    b[0] = makePair({ suit: "dot", rank: 1 });
+    b[1] = makePung({ suit: "bam", rank: 2 });
+    b[2] = makeRun("crak");
+    b[3] = makePung({ dragon: "red" });
+    const rec = reconcileTargets(setTarget(s, "GATERUN").target, b);
+    s = { ...s, board: rec.board, target: rec.target, status: "won-hand" };
+    const result = completeHand(s);
+    const tiles = result.state.board.filter(Boolean).length;
+    expect(tiles).toBeGreaterThanOrEqual(1);
+    expect(hasAnyMove(result.state.board)).toBe(true);
   });
 });
 

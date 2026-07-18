@@ -88,10 +88,12 @@ The engine lives in pure TypeScript under `game/` and is covered by tests
 ## Target hands
 
 Above the board, four explicit requirement slots (e.g. `ANY PAIR`, `ANY SET`,
-`DOT SET`, `DRAGON SET`). Patterns live in `data/targets.ts`, each tagged with a
-**difficulty** (1–3) and dealt on a **ramp**: round 1 always deals the easy
-opener, rounds 2–3 stay easy/medium, and hard hands (multiple runs, dragon +
-run) only appear from round 4+. A completed board set fills the **most specific**
+`DOT SET`, `DRAGON SET`). Patterns live in `data/targets.ts` (eight of them), each tagged with a
+**difficulty** (1–3) and dealt on a **ramp**: **rounds 1–2 are always easy**
+(two openers you can reliably bank), rounds 3–6 add the medium tier
+(pungs, a dragon set), and hard hands (three suits, multiple runs, run + dragon)
+only appear from round 7+ (or occasionally rounds 5–6). This is what turns a run
+from "one hand then dead" into a real progression. A completed board set fills the **most specific**
 unfilled slot first, is marked with a ribbon, and never counts toward more than
 one slot. Fill all four to call **MAHJ!**
 
@@ -132,10 +134,13 @@ pair/pung is actually reachable — dragons are otherwise far too sparse to pair
 On top of the bag, ~66% of spawns are **reinforcement** draws: a tile chosen to
 combine with what's already on the board (complete a pung from a pair, fill a
 1‑2‑3 run gap, or pair up a lone tile). Without this, random spawns over 13 tile
-types simply pile up as junk. Reinforcement streaks are capped so no single tile
-floods the board, and the remaining fraction stays fair‑bag random for variety.
-Randomness is a deterministic `mulberry32` state stored in the game, so a game is
-reproducible and undo can restore RNG.
+types simply pile up as junk. Reinforcement diversifies away from the
+just‑spawned tile so no single type floods the board (identical spawns are
+capped at three in a row). A small flat **Joker** chance (~4%) sits on top so the
+taught wild mechanic actually appears — about one or two per game. The remaining
+fraction stays fair‑bag random for variety. Randomness is a deterministic
+`mulberry32` state stored in the game, so a game is reproducible and undo can
+restore RNG.
 
 ---
 
@@ -157,17 +162,32 @@ The first pass exposed five problems and the fixes that followed:
 | 4 | No ramp; every hand demanded 4 hard sets incl. a run | Difficulty-tiered patterns; easy opener needs no run |
 | 5 | Pungs slow, generation luck-heavy | Reinforcement completes pungs/runs; scoring rewards them |
 
-Result (150-game batch, heuristic AI), before → after:
+A **second pass** play-tested the balanced build and fixed the largest remaining
+problems:
 
-- Hand-completion rate: **0.5% → ~90%** of games reach at least one MAHJ
-- Moves per game (median): **16 → ~40** (p90 ~67, skilled tail 120+)
-- Hands per game: **0 → median 1**, p75 2, p90 3, max 7
-- Opening hand completion: **1% → ~88%**
-- Max identical consecutive spawns: capped at **3**; **0** games run forever;
-  **0%** degenerate free-hand cascades
+| # | Problem | Fix |
+| --- | --- | --- |
+| 1 | **Soft-lock**: a hand made entirely of its four scoring sets emptied the board on cash-in (~2.5% of games dead-locked) | `completeHand` tops the board back up to a playable minimum |
+| 2 | Difficulty cliff: **62% of runs died at exactly one hand** (round 2 was always a medium) | Rounds 1–2 are now both easy; two new easy/medium patterns added |
+| 3 | Miscalibrated tiers (SUITS 22%, GATE-with-run 25% sat beside TWINS 55%) | Genuinely hard hands moved to tier 3; tier 2 now clusters ~40–50% |
+| 4 | **Jokers nearly absent** (1.7% of spawns) despite being taught | Small flat joker spawn chance → ~4% (one or two per game) |
+| 5 | Short average run length (median 1 hand) | Gentler ramp + tier fixes lift the median run to two hands |
+
+Result (300-game batch, heuristic AI) after both passes:
+
+- Hand-completion rate: **~90%** of games reach at least one MAHJ (opener ~86%)
+- Moves per game: **median ~49**, p90 ~81, skilled tail 120+
+- Hands per game: **median 2**, p90 4, tail to 9–10 (mode is 2 hands)
+- "Died at exactly one hand": **62% → ~23%**
+- Tiers: easy 71–86%, medium ~40–50%, hard ~0–40% (the mastery ceiling)
+- Jokers ~4% of spawns; identical spawns capped at **3** in a row
+- **0** soft-locks, **0** games run forever, **0%** degenerate cascades
 
 Movement and combination resolution are verified **deterministic** (same seed →
 identical board/score trajectory) by both the unit tests and a simulation test.
+`tests/sim/report.test.ts` asserts health bounds (median moves ≥ 35, median
+hands ≥ 2, ≥ 75% reach a MAHJ, spawn streaks ≤ 4, no cascades) so the tuning
+cannot silently regress.
 
 ## Local development
 
@@ -179,7 +199,7 @@ npm run dev          # http://localhost:3000
 ## Test commands
 
 ```bash
-npm test             # vitest — engine unit tests (44 tests)
+npm test             # vitest — engine + simulation tests (54 tests)
 npm run typecheck    # tsc --noEmit
 npm run lint         # eslint (flat config)
 ```

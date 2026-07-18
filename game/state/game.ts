@@ -13,7 +13,14 @@ import { CELL_COUNT } from "@/types";
 import { applyMove, hasAnyMove } from "@/game/rules/movement";
 import { reconcileTargets } from "@/game/rules/targets";
 import { scoreForEvents, handCompletionScore, SCORING } from "@/game/scoring";
-import { buildBag, drawTile, pickEmptyCell, helpfulSpawn, REINFORCE_P } from "@/game/generator";
+import {
+  buildBag,
+  drawTile,
+  pickEmptyCell,
+  helpfulSpawn,
+  REINFORCE_P,
+  JOKER_SPAWN_P,
+} from "@/game/generator";
 import { nextRandom, randomSeed } from "@/lib/rng";
 import {
   instantiatePattern,
@@ -23,6 +30,8 @@ import {
 import { makeLooseFromType } from "@/game/tiles";
 
 const STARTING_TILES = 4;
+/** Minimum tiles the board must hold after a hand cashes in, to stay playable. */
+const MIN_TILES_AFTER_HAND = 4;
 
 // ---------------------------------------------------------------------------
 // Snapshot helpers (used for undo)
@@ -101,26 +110,48 @@ function spawnOne(
     return { board, bag, rngState, recentSpawns, spawnedCell: null, spawnedTile: null };
   }
 
-  // Roll for a reinforcement spawn (a tile that combines with the board) vs a
-  // fair-bag draw. Reinforcement keeps the board from choking on random junk.
-  const roll = nextRandom(rngState);
-  let rs = roll.state;
+  let rs = rngState;
   let type: TileTypeId;
   let nextBag = bag;
   let nextRecent = recentSpawns;
 
+  // Small flat chance of a Joker so this taught, wild mechanic actually shows up
+  // (the fair bag alone, diluted by reinforcement, made jokers almost invisible).
+  // Never two jokers in a row.
+  const jokerRoll = nextRandom(rs);
+  rs = jokerRoll.state;
+  const lastSpawn = recentSpawns[recentSpawns.length - 1];
+  if (jokerRoll.value < JOKER_SPAWN_P && lastSpawn !== "joker") {
+    const placedJ = pickEmptyCell(empties, rs);
+    const jokerTile = makeLooseFromType("joker");
+    const jb = board.slice();
+    jb[placedJ.cell] = jokerTile;
+    return {
+      board: jb,
+      bag,
+      rngState: placedJ.rngState,
+      recentSpawns: [...recentSpawns, "joker" as TileTypeId].slice(-8),
+      spawnedCell: placedJ.cell,
+      spawnedTile: jokerTile,
+    };
+  }
+
+  // Roll for a reinforcement spawn (a tile that combines with the board) vs a
+  // fair-bag draw. Reinforcement keeps the board from choking on random junk.
+  const roll = nextRandom(rs);
+  rs = roll.state;
+
   let reinforced: TileTypeId | null = null;
   if (roll.value < REINFORCE_P) {
-    const h = helpfulSpawn(board, target, rs);
-    rs = h.rngState;
-    reinforced = h.type;
-    // Fairness: never let reinforcement spawn the same tile more than three
-    // times in a row (a stuck pair could otherwise flood one type). Fall back
-    // to the fair bag, whose own guard then breaks the streak.
+    // Fairness: once a tile has been spawned twice in a row, tell reinforcement
+    // to pick a *different* helpful tile rather than flooding one type.
     const last = recentSpawns[recentSpawns.length - 1];
     let trailing = 0;
     for (let i = recentSpawns.length - 1; i >= 0 && recentSpawns[i] === last; i--) trailing++;
-    if (reinforced === last && trailing >= 3) reinforced = null;
+    const avoid = trailing >= 2 ? last : undefined;
+    const h = helpfulSpawn(board, target, rs, avoid);
+    rs = h.rngState;
+    reinforced = h.type;
   }
 
   if (reinforced) {
@@ -354,15 +385,36 @@ export function completeHand(state: GameState): HandCompletionResult {
   const picked = pickPatternForRound(nextRound, state.target.id, state.rngState);
   const reconciled = reconcileTargets(picked.pattern, board);
 
+  // Guarantee the next round is playable. If cashing in the hand left the board
+  // empty (or nearly so — e.g. the whole board WAS the four scoring sets), seed
+  // fresh tiles. Without this the board can dead-lock: no tiles to move means no
+  // move, and spawns only happen after a move.
+  let seededBoard = reconciled.board;
+  let bag = state.bag;
+  let rngState = picked.rngState;
+  let recentSpawns = state.recentSpawns;
+  let tileCount = seededBoard.filter(Boolean).length;
+  while (tileCount < MIN_TILES_AFTER_HAND) {
+    const out = spawnOne(seededBoard, reconciled.target, bag, rngState, recentSpawns);
+    if (out.spawnedTile == null) break; // board full (shouldn't happen here)
+    seededBoard = out.board;
+    bag = out.bag;
+    rngState = out.rngState;
+    recentSpawns = out.recentSpawns;
+    tileCount++;
+  }
+
   const nextState: GameState = {
     ...state,
-    board: reconciled.board,
+    board: seededBoard,
     target: reconciled.target,
     score: state.score + bonus,
     round: nextRound,
     multiplier: Math.round((state.multiplier + SCORING.multiplierStep) * 100) / 100,
     handsCompleted: state.handsCompleted + 1,
-    rngState: picked.rngState,
+    bag,
+    rngState,
+    recentSpawns,
     status: "playing",
   };
 

@@ -59,7 +59,7 @@ describe("reconcile", () => {
   });
 
   it("reports complete when all four slots fill", () => {
-    const pattern = instantiatePattern("GATE");
+    const pattern = instantiatePattern("GATERUN"); // pair + pung + run + dragon
     const board = boardWith(
       makePair({ suit: "dot", rank: 1 }),
       makePung({ suit: "bam", rank: 2 }),

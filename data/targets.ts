@@ -27,6 +27,7 @@ type PatternTemplate = {
 };
 
 export const PATTERN_TEMPLATES: PatternTemplate[] = [
+  // --- Tier 1: easy openers (no forced run) --------------------------------
   {
     id: "OPEN",
     name: "Opening Draw",
@@ -39,16 +40,17 @@ export const PATTERN_TEMPLATES: PatternTemplate[] = [
     ],
   },
   {
-    id: "SUITS",
-    name: "Three Suits",
-    difficulty: 2,
+    id: "BROOK",
+    name: "Little Brook",
+    difficulty: 1,
     requirements: [
       req("any-pair", "ANY PAIR"),
-      req("suit-set", "DOT SET", "dot"),
-      req("suit-set", "BAM SET", "bam"),
-      req("suit-set", "CRAK SET", "crak"),
+      req("any-pair", "ANY PAIR"),
+      req("any-pair", "ANY PAIR"),
+      req("any-set", "ANY SET"),
     ],
   },
+  // --- Tier 2: medium (achievable ~45-60%) ---------------------------------
   {
     id: "TWINS",
     name: "Twin Pungs",
@@ -64,6 +66,40 @@ export const PATTERN_TEMPLATES: PatternTemplate[] = [
     id: "GATE",
     name: "Dragon's Gate",
     difficulty: 2,
+    requirements: [
+      req("any-pair", "ANY PAIR"),
+      req("any-pair", "ANY PAIR"),
+      req("number-pung", "NUMBER PUNG"),
+      req("dragon-set", "DRAGON SET"),
+    ],
+  },
+  {
+    id: "FORGE",
+    name: "Triple Forge",
+    difficulty: 2,
+    requirements: [
+      req("any-pair", "ANY PAIR"),
+      req("number-pung", "NUMBER PUNG"),
+      req("number-pung", "NUMBER PUNG"),
+      req("any-set", "ANY SET"),
+    ],
+  },
+  // --- Tier 3: hard (runs and/or three suits) ------------------------------
+  {
+    id: "SUITS",
+    name: "Three Suits",
+    difficulty: 3,
+    requirements: [
+      req("any-pair", "ANY PAIR"),
+      req("suit-set", "DOT SET", "dot"),
+      req("suit-set", "BAM SET", "bam"),
+      req("suit-set", "CRAK SET", "crak"),
+    ],
+  },
+  {
+    id: "GATERUN",
+    name: "River Gate",
+    difficulty: 3,
     requirements: [
       req("any-pair", "ANY PAIR"),
       req("number-pung", "NUMBER PUNG"),
@@ -113,11 +149,16 @@ export function instantiatePattern(templateId: string): TargetPattern {
 }
 
 /**
- * Deal the next pattern with a difficulty ramp:
- *   round 1        → easy only
- *   rounds 2–3     → easy / medium
- *   rounds 4–5     → medium (with occasional hard)
- *   round 6+       → anything
+ * Deal the next pattern on a difficulty ramp. The first two rounds are easy so a
+ * player reliably banks a couple of hands (and multiplier) before the game asks
+ * for pungs, dragon sets or runs — this is what turns a run from "one hand then
+ * dead" into a genuine progression.
+ *
+ *   rounds 1–2   → easy only
+ *   rounds 3–4   → easy / medium
+ *   rounds 5–6   → easy / medium, with an occasional hard hand
+ *   round 7+     → anything
+ *
  * Never repeats the immediately-previous pattern when an alternative exists.
  */
 export function pickPatternForRound(
@@ -126,15 +167,14 @@ export function pickPatternForRound(
   rngState: number,
 ): { pattern: TargetPattern; rngState: number } {
   let maxDiff: number;
-  if (round <= 1) maxDiff = 1;
-  else if (round <= 3) maxDiff = 2;
-  else if (round <= 5) maxDiff = 2;
+  if (round <= 2) maxDiff = 1;
+  else if (round <= 6) maxDiff = 2;
   else maxDiff = 3;
 
-  // On rounds 4–5, allow an occasional hard hand.
+  // On rounds 5–6, allow an occasional hard hand to keep late runs tense.
   const r0 = nextRandom(rngState);
   let state = r0.state;
-  if (round >= 4 && round <= 5 && r0.value < 0.34) maxDiff = 3;
+  if (round >= 5 && round <= 6 && r0.value < 0.3) maxDiff = 3;
 
   let pool = PATTERN_TEMPLATES.filter((t) => t.difficulty <= maxDiff && t.id !== currentId);
   if (pool.length === 0) pool = PATTERN_TEMPLATES.filter((t) => t.id !== currentId);

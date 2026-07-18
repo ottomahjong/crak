@@ -35,14 +35,14 @@ export function DebugPanel({ game, onApply }: Props) {
 
   const nearlyComplete = () => {
     const b = emptyBoard();
-    // Three of four pattern-A slots filled; leave the dragon set to the player.
+    // Three of four GATERUN slots filled; leave the dragon set to the player.
     b[0] = makePair({ suit: "dot", rank: 1 });
     b[1] = makePung({ suit: "bam", rank: 2 });
     b[2] = makeRun("crak");
     b[4] = makeLooseFromType("dragon-red");
     b[5] = makeLooseFromType("dragon-red");
     b[6] = makeLooseFromType("dragon-red");
-    onApply(withBoard(b, "A"));
+    onApply(withBoard(b, "GATERUN"));
   };
 
   const fullHand = () => {
@@ -51,7 +51,7 @@ export function DebugPanel({ game, onApply }: Props) {
     b[1] = makePung({ suit: "bam", rank: 2 });
     b[2] = makeRun("crak");
     b[3] = makePung({ dragon: "red" });
-    const g = withBoard(b, "A");
+    const g = withBoard(b, "GATERUN");
     onApply({ ...g, status: reconcileTargets(g.target, g.board).complete ? "won-hand" : "playing" });
   };
 

@@ -170,6 +170,13 @@ export function buildBag(
 export const REINFORCE_P = 0.66;
 
 /**
+ * Flat per-spawn chance of a Joker, on top of the (rare) bag joker. Tuned so a
+ * typical game sees one or two jokers — enough that the taught wild mechanic is
+ * real, still rare enough to feel special.
+ */
+export const JOKER_SPAWN_P = 0.025;
+
+/**
  * Pick a tile type that would help the player right now: complete a pung from an
  * existing pair, fill a 1-2-3 run gap, or pair up a lone tile. Target-relevant
  * options are weighted higher. Returns null when nothing on the board can be
@@ -179,6 +186,7 @@ export function helpfulSpawn(
   board: Board,
   target: TargetPattern,
   rngState: number,
+  avoid?: TileTypeId,
 ): { type: TileTypeId | null; rngState: number } {
   const relevant = relevantTypes(target);
   const { numbers, dragons } = looseTally(board);
@@ -186,6 +194,7 @@ export function helpfulSpawn(
   type Cand = { type: TileTypeId; weight: number };
   const cands: Cand[] = [];
   const push = (type: TileTypeId, base: number) => {
+    if (type === avoid) return; // diversify: don't reinforce the just-spawned type
     cands.push({ type, weight: base * (relevant.has(type) ? 1.6 : 1) });
   };
 
@@ -206,9 +215,17 @@ export function helpfulSpawn(
     }
   }
 
-  // Pair up a lone tile.
-  for (const [type, count] of numbers) if (count >= 1) push(type, count >= 2 ? 4 : 3);
-  for (const [color, count] of dragons) if (count >= 1) push(`dragon-${color}` as TileTypeId, 3);
+  // Pair up a lone tile (count 1), or edge toward a pung (count 2+). Crucially a
+  // held-duplicate is weighted LOWER than a lone tile, not higher — over-feeding
+  // a type the board already has two of just floods the board with one tile.
+  for (const [type, count] of numbers) {
+    if (count === 1) push(type, 3);
+    else if (count >= 2) push(type, 2);
+  }
+  for (const [color, count] of dragons) {
+    if (count === 1) push(`dragon-${color}` as TileTypeId, 3);
+    else if (count >= 2) push(`dragon-${color}` as TileTypeId, 2);
+  }
 
   if (cands.length === 0) return { type: null, rngState };
 

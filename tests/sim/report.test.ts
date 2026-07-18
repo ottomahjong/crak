@@ -96,6 +96,7 @@ describe("simulation report", () => {
 
     // Health-bound regression assertions — guard the balance we tuned to.
     const movesMedian = summarize(moves).median;
+    const handsMedian = summarize(hands).median;
     const handCompletionRate = (N - zeroHand) / N;
     const openerRate = perPattern["OPEN"].started
       ? perPattern["OPEN"].completed / perPattern["OPEN"].started
@@ -105,9 +106,11 @@ describe("simulation report", () => {
     // Games must actually resolve, not run forever.
     expect(capped).toBe(0);
     // A run should be a real session, not 16 moves.
-    expect(movesMedian).toBeGreaterThanOrEqual(28);
+    expect(movesMedian).toBeGreaterThanOrEqual(35);
+    // A typical run should reach a couple of hands, not just the opener.
+    expect(handsMedian).toBeGreaterThanOrEqual(2);
     // Most players should reach at least one MAHJ.
-    expect(handCompletionRate).toBeGreaterThan(0.7);
+    expect(handCompletionRate).toBeGreaterThan(0.75);
     // The opening hand is meant to be reliably achievable.
     expect(openerRate).toBeGreaterThan(0.65);
     // Spawns must stay fair — no long identical streaks.
