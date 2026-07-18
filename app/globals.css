@@ -6,7 +6,11 @@
 /* Design tokens                                                       */
 /* ------------------------------------------------------------------ */
 :root {
-  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Georgia", ui-serif, serif;
+  /* Google Sans first (used where the OS/browser provides it), then the
+     self-hosted open geometric fallback, then the platform sans. */
+  --font-sans: "Google Sans", "Google Sans Text", "Product Sans", var(--font-gsans),
+    system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: var(--font-sans);
 
   --suit-dot: #3f7cac;
   --suit-bam: #3f8f5f;
@@ -69,7 +73,7 @@ body {
   background-image: var(--bg-grad);
   background-attachment: fixed;
   color: var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overscroll-behavior: none;
@@ -162,7 +166,7 @@ a:focus-visible {
   font-family: var(--font-display);
   font-weight: 800;
   font-size: clamp(56px, 20vw, 92px);
-  letter-spacing: 2px;
+  letter-spacing: -1.5px;
   margin: 0;
   line-height: 0.95;
   color: var(--text);

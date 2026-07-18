@@ -24,7 +24,14 @@ const config: Config = {
         gold: "#c8a44d",
       },
       fontFamily: {
-        display: ["var(--font-display)", "ui-serif", "Georgia", "serif"],
+        display: [
+          "Google Sans",
+          "Google Sans Text",
+          "Product Sans",
+          "var(--font-gsans)",
+          "system-ui",
+          "sans-serif",
+        ],
       },
       boxShadow: {
         tile: "0 2px 0 0 rgba(0,0,0,0.18), 0 6px 12px -4px rgba(0,0,0,0.35)",

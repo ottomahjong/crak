@@ -1,6 +1,18 @@
 import type { Metadata, Viewport } from "next";
+import { Poppins } from "next/font/google";
 import "./globals.css";
 import { ServiceWorker } from "./sw-register";
+
+// Real "Google Sans" is Google's proprietary brand font (not web-distributable),
+// so it leads the CSS stack for devices that have it. Poppins — an open (OFL),
+// geometric sans in the same family of shapes — is self-hosted here as the
+// concrete fallback, so the type looks Google-Sans-like everywhere and offline.
+const googleSans = Poppins({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800"],
+  variable: "--font-gsans",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   applicationName: "CRAK!",
@@ -32,7 +44,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-theme="dark" suppressHydrationWarning>
+    <html lang="en" data-theme="dark" className={googleSans.variable} suppressHydrationWarning>
       <body>
         {children}
         <ServiceWorker />
