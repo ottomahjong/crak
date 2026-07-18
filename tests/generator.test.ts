@@ -11,11 +11,21 @@ describe("fair bag", () => {
   });
 
   it("weights the bag toward the target's suit", () => {
-    const target = instantiatePattern("B"); // DOT/BAM/CRAK sets
+    const target = instantiatePattern("SUITS"); // DOT/BAM/CRAK sets
     const { bag } = buildBag(target, 999);
     const dots = bag.filter((t) => t.startsWith("dot-")).length;
     // Base is 2 of each; weighting adds another copy of dot ranks.
     expect(dots).toBeGreaterThanOrEqual(9);
+  });
+
+  it("emphasises a dragon colour when a dragon set is required", () => {
+    const target = instantiatePattern("GATE"); // has DRAGON SET
+    const { bag } = buildBag(target, 4321);
+    const counts: Record<string, number> = {};
+    for (const t of bag) if (t.startsWith("dragon-")) counts[t] = (counts[t] ?? 0) + 1;
+    const max = Math.max(...Object.values(counts));
+    // The focus colour gets extra copies (4) vs a baseline of 1.
+    expect(max).toBeGreaterThanOrEqual(4);
   });
 
   it("is deterministic for a fixed seed", () => {
@@ -51,7 +61,7 @@ describe("fair bag", () => {
   });
 
   it("relevantTypes includes needed suit and joker", () => {
-    const target = instantiatePattern("B");
+    const target = instantiatePattern("SUITS");
     const rel = relevantTypes(target);
     expect(rel.has("dot-1")).toBe(true);
     expect(rel.has("joker")).toBe(true);

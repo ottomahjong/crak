@@ -19,6 +19,7 @@ import {
   DEFAULT_STATS,
 } from "@/lib/storage";
 import { applyEventsToStats, finalizeGame } from "@/lib/stats";
+import { handCompletionScore } from "@/game/scoring";
 import { playSound, setAudioEnabled, unlockAudio } from "@/lib/audio";
 import { haptics, setHapticsEnabled } from "@/lib/haptics";
 
@@ -206,7 +207,7 @@ export function useGame() {
       // completeHand is pure; compute the bonus preview for the summary.
       playSound("mahj");
       haptics.mahj();
-      setHandSummary({ bonus: Math.round(1000 * game.multiplier + empties * 20), empties });
+      setHandSummary({ bonus: handCompletionScore(game.multiplier, empties), empties });
       setOverlay("mahj");
     }
     if (game.status === "game-over" && overlay !== "gameover") {

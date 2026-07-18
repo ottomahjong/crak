@@ -5,17 +5,16 @@ import type { CombineEvent } from "@/types";
 // ---------------------------------------------------------------------------
 
 export const SCORING = {
-  pair: 25,
-  numberPung: 100,
-  dragonPair: 50,
-  dragonPung: 175,
-  run: 125,
-  targetSlot: 100,
-  handBase: 1000,
-  emptyCellBonus: 20, // per empty cell at hand completion
-  /** Multiplier increment each completed hand. */
-  multiplierStep: 0.25,
-  /** Consecutive-hand escalation is folded into the multiplier growth. */
+  pair: 20,
+  numberPung: 120, // pungs cost two moves + free a cell → reward them
+  dragonPair: 45,
+  dragonPung: 200,
+  run: 140, // runs consume three tiles → the biggest space win
+  targetSlot: 120,
+  handBase: 600, // hands are frequent now; keep the per-hand payoff meaningful
+  emptyCellBonus: 15, // per empty cell at hand completion
+  /** Multiplier increment each completed hand (consecutive-hand escalation). */
+  multiplierStep: 0.2,
 } as const;
 
 export function scoreForEvent(event: CombineEvent): number {

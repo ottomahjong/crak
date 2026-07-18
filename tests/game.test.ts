@@ -18,11 +18,11 @@ function freshState(seed = 123): GameState {
 }
 
 describe("initial state", () => {
-  it("starts with a handful of loose tiles and pattern A", () => {
+  it("starts with a handful of loose tiles and the opening pattern", () => {
     const s = freshState();
     const count = s.board.filter(Boolean).length;
     expect(count).toBe(4);
-    expect(s.target.id).toBe("A");
+    expect(s.target.id).toBe("OPEN");
     expect(s.score).toBe(0);
     expect(s.round).toBe(1);
     expect(s.undoAvailable).toBe(true);
@@ -38,21 +38,28 @@ describe("initial state", () => {
 });
 
 describe("move", () => {
-  it("spawns a tile only on a valid move", () => {
-    let s = freshState(1);
-    // Find a direction that changes the board.
-    const dirs = ["left", "right", "up", "down"] as const;
-    const before = s.board.filter(Boolean).length;
-    for (const d of dirs) {
-      const out = move(s, d);
-      if (out.changed) {
-        const after = out.state.board.filter(Boolean).length;
-        // one spawn added (net of any merges)
-        expect(after).toBeGreaterThanOrEqual(before - 2 + 1);
-        expect(out.spawnedTile).not.toBeNull();
-        return;
-      }
-    }
+  it("spawns a tile on a non-combining slide, but not on a combining move", () => {
+    // A pure slide (no combination) spawns exactly one tile.
+    let slide = freshState();
+    const b1 = emptyBoard();
+    b1[0] = mkLoose("dot-1");
+    b1[2] = mkLoose("bam-3"); // different tiles, no merge, they just slide
+    slide = { ...slide, board: b1 };
+    const slid = move(slide, "left");
+    expect(slid.changed).toBe(true);
+    expect(slid.events).toHaveLength(0);
+    expect(slid.spawnedTile).not.toBeNull();
+
+    // A combining move consumes tiles and skips the spawn (breathing room).
+    let combo = freshState();
+    const b2 = emptyBoard();
+    b2[0] = mkLoose("dot-1");
+    b2[1] = mkLoose("dot-1"); // will pair
+    combo = { ...combo, board: b2 };
+    const merged = move(combo, "left");
+    expect(merged.changed).toBe(true);
+    expect(merged.events.length).toBeGreaterThan(0);
+    expect(merged.spawnedTile).toBeNull();
   });
 
   it("ignores invalid moves without spawning", () => {
@@ -70,11 +77,11 @@ describe("move", () => {
     const b = emptyBoard();
     b[0] = mkLoose("dot-1");
     b[1] = mkLoose("dot-1");
-    s = { ...s, board: b, target: setTarget(s, "A").target };
+    s = { ...s, board: b, target: setTarget(s, "OPEN").target };
     const out = move(s, "left");
     expect(out.changed).toBe(true);
-    // A pair scores 25 and fills the ANY PAIR slot (+100).
-    expect(out.scoreDelta).toBeGreaterThanOrEqual(125);
+    // A pair scores 20 and fills an ANY PAIR slot (+120).
+    expect(out.scoreDelta).toBeGreaterThanOrEqual(140);
   });
 });
 
@@ -99,10 +106,10 @@ describe("undo", () => {
 });
 
 describe("hand completion", () => {
-  it("advances round, bumps multiplier, keeps completed sets, clears loose tiles", () => {
+  it("advances round, bumps multiplier, cashes in the fulfilling sets, keeps loose tiles", () => {
     let s = freshState();
     const b = emptyBoard();
-    // Four completed sets satisfying pattern A + some loose numbers.
+    // Four completed sets satisfying pattern GATE + some loose numbers.
     b[0] = makePair({ suit: "dot", rank: 1 });
     b[1] = makePung({ suit: "bam", rank: 2 });
     b[2] = makeRun("crak");
@@ -111,7 +118,7 @@ describe("hand completion", () => {
     b[5] = mkLoose("bam-1");
     b[6] = mkLoose("crak-3");
     b[7] = mkLoose("dot-3");
-    const rec = reconcileTargets(setTarget(s, "A").target, b);
+    const rec = reconcileTargets(setTarget(s, "GATE").target, b);
     s = { ...s, board: rec.board, target: rec.target, status: "won-hand" };
     expect(rec.complete).toBe(true);
 
@@ -120,12 +127,29 @@ describe("hand completion", () => {
     expect(result.state.multiplier).toBeGreaterThan(1);
     expect(result.state.handsCompleted).toBe(1);
     expect(result.bonus).toBeGreaterThan(0);
-    // Completed sets remain.
+    // The four fulfilling sets are cashed in (removed) to make room.
     const completed = result.state.board.filter((t) => t?.state === "completed").length;
-    expect(completed).toBe(4);
-    // Up to three loose numbers removed.
-    expect(result.removedTiles).toBeLessThanOrEqual(3);
+    expect(completed).toBe(0);
+    expect(result.removedTiles).toBe(4);
+    // Loose tiles carry over.
+    const loose = result.state.board.filter((t) => t?.state === "loose").length;
+    expect(loose).toBe(4);
     expect(result.state.status).toBe("playing");
+  });
+
+  it("never counts a cashed-in set toward the next hand", () => {
+    let s = freshState();
+    const b = emptyBoard();
+    b[0] = makePair({ suit: "dot", rank: 1 });
+    b[1] = makePung({ suit: "bam", rank: 2 });
+    b[2] = makeRun("crak");
+    b[3] = makePung({ dragon: "red" });
+    const rec = reconcileTargets(setTarget(s, "GATE").target, b);
+    s = { ...s, board: rec.board, target: rec.target, status: "won-hand" };
+    const result = completeHand(s);
+    // Board is empty of completed sets, so the new target starts unfilled.
+    const filled = result.state.target.requirements.filter((r) => r.filledBy).length;
+    expect(filled).toBe(0);
   });
 });
 

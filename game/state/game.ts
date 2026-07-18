@@ -7,15 +7,20 @@ import type {
   Suit,
   Tile,
   TargetPattern,
+  TileTypeId,
 } from "@/types";
 import { CELL_COUNT } from "@/types";
 import { applyMove, hasAnyMove } from "@/game/rules/movement";
 import { reconcileTargets } from "@/game/rules/targets";
 import { scoreForEvents, handCompletionScore, SCORING } from "@/game/scoring";
-import { buildBag, drawTile, pickEmptyCell } from "@/game/generator";
-import { instantiatePattern, PATTERN_TEMPLATES } from "@/data/targets";
-import { isLooseNumber, makeLooseFromType } from "@/game/tiles";
-import { randomSeed } from "@/lib/rng";
+import { buildBag, drawTile, pickEmptyCell, helpfulSpawn, REINFORCE_P } from "@/game/generator";
+import { nextRandom, randomSeed } from "@/lib/rng";
+import {
+  instantiatePattern,
+  pickPatternForRound,
+  OPENING_PATTERN_ID,
+} from "@/data/targets";
+import { makeLooseFromType } from "@/game/tiles";
 
 const STARTING_TILES = 4;
 
@@ -95,16 +100,49 @@ function spawnOne(
   if (empties.length === 0) {
     return { board, bag, rngState, recentSpawns, spawnedCell: null, spawnedTile: null };
   }
-  const draw = drawTile({ bag, rngState, recentSpawns }, target);
-  const placed = pickEmptyCell(empties, draw.rngState);
-  const tile = makeLooseFromType(draw.type);
+
+  // Roll for a reinforcement spawn (a tile that combines with the board) vs a
+  // fair-bag draw. Reinforcement keeps the board from choking on random junk.
+  const roll = nextRandom(rngState);
+  let rs = roll.state;
+  let type: TileTypeId;
+  let nextBag = bag;
+  let nextRecent = recentSpawns;
+
+  let reinforced: TileTypeId | null = null;
+  if (roll.value < REINFORCE_P) {
+    const h = helpfulSpawn(board, target, rs);
+    rs = h.rngState;
+    reinforced = h.type;
+    // Fairness: never let reinforcement spawn the same tile more than three
+    // times in a row (a stuck pair could otherwise flood one type). Fall back
+    // to the fair bag, whose own guard then breaks the streak.
+    const last = recentSpawns[recentSpawns.length - 1];
+    let trailing = 0;
+    for (let i = recentSpawns.length - 1; i >= 0 && recentSpawns[i] === last; i--) trailing++;
+    if (reinforced === last && trailing >= 3) reinforced = null;
+  }
+
+  if (reinforced) {
+    type = reinforced;
+    nextRecent = [...recentSpawns, type].slice(-8);
+  } else {
+    const draw = drawTile({ bag, rngState: rs, recentSpawns }, target, board);
+    type = draw.type;
+    nextBag = draw.bag;
+    rs = draw.rngState;
+    nextRecent = draw.recentSpawns;
+  }
+
+  const placed = pickEmptyCell(empties, rs);
+  const tile = makeLooseFromType(type);
   const nextBoard = board.slice();
   nextBoard[placed.cell] = tile;
   return {
     board: nextBoard,
-    bag: draw.bag,
+    bag: nextBag,
     rngState: placed.rngState,
-    recentSpawns: draw.recentSpawns,
+    recentSpawns: nextRecent,
     spawnedCell: placed.cell,
     spawnedTile: tile,
   };
@@ -115,14 +153,14 @@ function spawnOne(
 // ---------------------------------------------------------------------------
 
 export function createInitialState(seed = randomSeed()): GameState {
-  const target = instantiatePattern("A");
+  const target = instantiatePattern(OPENING_PATTERN_ID);
   let board: Board = new Array(CELL_COUNT).fill(null);
   let bag: GameState["bag"] = [];
   let rngState = seed >>> 0 || 1;
   let recentSpawns: GameState["recentSpawns"] = [];
 
   // Prime the bag.
-  const primed = buildBag(target, rngState);
+  const primed = buildBag(target, rngState, board);
   bag = primed.bag;
   rngState = primed.rngState;
 
@@ -222,14 +260,28 @@ export function move(state: GameState, direction: Direction): MoveOutcome {
   const reconciled = reconcileTargets(state.target, raw.board);
   scoreDelta += reconciled.newlyFilled.length * SCORING.targetSlot;
 
-  // Spawn one new tile.
-  const spawn = spawnOne(
-    reconciled.board,
-    reconciled.target,
-    state.bag,
-    state.rngState,
-    state.recentSpawns,
-  );
+  // Spawn one new tile — UNLESS this move made a combination. Combining is what
+  // buys breathing room on a 16-cell board: skilful merges hold the flood back,
+  // while "dead" slides that only shuffle tiles keep the board advancing. This
+  // is the key lever that lets a player assemble a four-set hand before the
+  // board chokes on un-combinable loose tiles.
+  const combined = raw.events.length > 0;
+  const spawn = combined
+    ? {
+        board: reconciled.board,
+        bag: state.bag,
+        rngState: state.rngState,
+        recentSpawns: state.recentSpawns,
+        spawnedCell: null,
+        spawnedTile: null,
+      }
+    : spawnOne(
+        reconciled.board,
+        reconciled.target,
+        state.bag,
+        state.rngState,
+        state.recentSpawns,
+      );
 
   const handCompleted = reconciled.complete;
   const gameOver =
@@ -286,66 +338,35 @@ export type HandCompletionResult = {
   removedTiles: number;
 };
 
-/** Remove up to `count` low-value loose numbered tiles (never completed sets). */
-function clearBreathingRoom(
-  board: Board,
-  count: number,
-  rngState: number,
-): { board: Board; rngState: number; removed: number } {
-  const candidates: number[] = [];
-  board.forEach((t, i) => {
-    if (t && isLooseNumber(t)) candidates.push(i);
-  });
-  // Deterministic shuffle of candidate indices.
-  let s = rngState;
-  for (let i = candidates.length - 1; i > 0; i--) {
-    s = (s + 0x6d2b79f5) | 0;
-    let t = Math.imul(s ^ (s >>> 15), 1 | s);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    const rand = ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    const j = Math.floor(rand * (i + 1));
-    [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
-  }
-  const nextBoard = board.slice();
-  const toRemove = candidates.slice(0, count);
-  for (const idx of toRemove) nextBoard[idx] = null;
-  return { board: nextBoard, rngState: s >>> 0, removed: toRemove.length };
-}
-
-function pickNextPattern(currentId: string, rngState: number): { pattern: TargetPattern; rngState: number } {
-  const others = PATTERN_TEMPLATES.filter((t) => t.id !== currentId);
-  const s = (rngState + 0x6d2b79f5) | 0;
-  let t = Math.imul(s ^ (s >>> 15), 1 | s);
-  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-  const rand = ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  const pick = others[Math.floor(rand * others.length)];
-  return { pattern: instantiatePattern(pick.id), rngState: s >>> 0 };
-}
-
 export function completeHand(state: GameState): HandCompletionResult {
   const empties = emptyCells(state.board).length;
   const bonus = handCompletionScore(state.multiplier, empties);
 
-  // Clear breathing room from the *current* board (completed sets untouched).
-  const cleared = clearBreathingRoom(state.board, 3, state.rngState);
+  // Cash in the sets that fulfilled this hand: they are removed from the board,
+  // which both scores the hand and creates breathing room. Loose tiles and any
+  // *extra* unspent sets carry over as a head start on the next hand. Because
+  // scored sets leave the board, no set can ever be counted toward two hands.
+  const cashedIds = new Set<string>();
+  for (const r of state.target.requirements) if (r.filledBy) cashedIds.add(r.filledBy);
+  const board: Board = state.board.map((t) => (t && cashedIds.has(t.id) ? null : t));
 
-  // New target, keeping the board.
-  const nextPattern = pickNextPattern(state.target.id, cleared.rngState);
-  const reconciled = reconcileTargets(nextPattern.pattern, cleared.board);
+  const nextRound = state.round + 1;
+  const picked = pickPatternForRound(nextRound, state.target.id, state.rngState);
+  const reconciled = reconcileTargets(picked.pattern, board);
 
   const nextState: GameState = {
     ...state,
     board: reconciled.board,
     target: reconciled.target,
     score: state.score + bonus,
-    round: state.round + 1,
+    round: nextRound,
     multiplier: Math.round((state.multiplier + SCORING.multiplierStep) * 100) / 100,
     handsCompleted: state.handsCompleted + 1,
-    rngState: nextPattern.rngState,
+    rngState: picked.rngState,
     status: "playing",
   };
 
-  return { state: nextState, bonus, emptyCells: empties, removedTiles: cleared.removed };
+  return { state: nextState, bonus, emptyCells: empties, removedTiles: cashedIds.size };
 }
 
 /** Force a fresh target pattern (debug / testing). */

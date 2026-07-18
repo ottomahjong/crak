@@ -71,23 +71,36 @@ edge** (where tiles pile up) toward the trailing edge:
    never eligible for runs.
 
 After a valid move the engine, in order: resolves combinations → reconciles the
-target hand → spawns one new tile → updates the score → checks for hand
-completion → checks whether any legal move remains. An **invalid** swipe changes
-nothing and spawns nothing.
+target hand → **spawns one new tile unless the move made a combination** →
+updates the score → checks for hand completion → checks whether any legal move
+remains. An **invalid** swipe changes nothing and spawns nothing.
+
+**Breathing room (why combining skips the spawn).** On a 16-cell board with 13
+tile types, spawning after *every* move floods the grid with un-combinable
+tiles before a four-set hand can be assembled. So any move that makes a
+combination skips that turn's spawn — combining is what buys you room, and
+"dead" slides that only shuffle tiles keep the board advancing. This is the
+central balance lever (see *Balance & play-testing*).
 
 The engine lives in pure TypeScript under `game/` and is covered by tests
 (`tests/`). See `game/rules/combine.ts` for the authoritative resolution code.
 
 ## Target hands
 
-Above the board, four explicit requirement slots (e.g. `ANY PAIR`, `DOT SET`,
-`BAM RUN`, `DRAGON SET`). Patterns A–E live in `data/targets.ts`. A completed
-board set fills the **most specific** unfilled slot first, is marked with a ribbon,
-and never counts toward more than one slot. Fill all four to call **MAHJ!**
+Above the board, four explicit requirement slots (e.g. `ANY PAIR`, `ANY SET`,
+`DOT SET`, `DRAGON SET`). Patterns live in `data/targets.ts`, each tagged with a
+**difficulty** (1–3) and dealt on a **ramp**: round 1 always deals the easy
+opener, rounds 2–3 stay easy/medium, and hard hands (multiple runs, dragon +
+run) only appear from round 4+. A completed board set fills the **most specific**
+unfilled slot first, is marked with a ribbon, and never counts toward more than
+one slot. Fill all four to call **MAHJ!**
 
-On hand completion: a bonus is awarded, the round and multiplier increase, a fresh
-target is dealt, three low‑value loose tiles clear for breathing room (completed
-sets are never removed), and play continues on the same board.
+On hand completion: a bonus is awarded, the round and multiplier increase, and
+the **four sets that fulfilled the hand are cashed in** — removed from the board,
+which is what creates breathing room for the next round. Loose tiles and any
+extra unspent sets carry over as a head start. Because scored sets leave the
+board, no set can ever be counted toward two hands (no degenerate cascades), and
+the difficulty ramp is what gradually tightens the game.
 
 ## Scoring
 
@@ -95,26 +108,66 @@ All constants live in `game/scoring.ts`:
 
 | Event | Points |
 | --- | --- |
-| Pair | 25 |
-| Numbered pung | 100 |
-| Dragon pair | 50 |
-| Dragon pung | 175 |
-| Suited run | 125 |
-| Target slot filled | +100 |
-| Hand completed | 1000 × multiplier |
-| Empty cells at hand completion | +20 each |
-| Consecutive hands | multiplier grows +0.25 per hand |
+| Pair | 20 |
+| Numbered pung | 120 |
+| Dragon pair | 45 |
+| Dragon pung | 200 |
+| Suited run | 140 |
+| Target slot filled | +120 |
+| Hand completed | 600 × multiplier |
+| Empty cells at hand completion | +15 each |
+| Consecutive hands | multiplier grows +0.2 per hand |
+
+Pungs and runs are scored highest because they consume the most tiles and free
+the most space — the plays that actually sustain a run.
 
 ## Tile spawning
 
 A **fair‑bag** generator (`game/generator.ts`): a balanced, shuffled bag
-(numbers common, dragons uncommon, joker rare) is drawn down and refilled. Each
-bag gets light target‑aware weighting toward the suits the current hand needs.
-Guards prevent more than three identical consecutive spawns and long stretches
-with no target‑relevant tile. Randomness is a deterministic `mulberry32` state
-stored in the game, so a game is reproducible and undo can restore RNG.
+(numbers common, dragons uncommon, joker rare) is drawn down and refilled, with
+target‑aware weighting toward the suits the current hand needs and a **dragon
+focus** (when a dragon set is required, one colour is emphasised so a dragon
+pair/pung is actually reachable — dragons are otherwise far too sparse to pair).
+
+On top of the bag, ~66% of spawns are **reinforcement** draws: a tile chosen to
+combine with what's already on the board (complete a pung from a pair, fill a
+1‑2‑3 run gap, or pair up a lone tile). Without this, random spawns over 13 tile
+types simply pile up as junk. Reinforcement streaks are capped so no single tile
+floods the board, and the remaining fraction stays fair‑bag random for variety.
+Randomness is a deterministic `mulberry32` state stored in the game, so a game is
+reproducible and undo can restore RNG.
 
 ---
+
+## Balance & play-testing
+
+The rules engine is pure and React-free, so it can be play-tested headlessly. A
+heuristic-AI harness (`tests/sim/harness.ts`) plays full games and reports
+balance metrics; `tests/sim/report.test.ts` runs a batch (150 games by default,
+`SIM_N=500 npm test` for more) and asserts health bounds so a regression in the
+tuning fails CI.
+
+The first pass exposed five problems and the fixes that followed:
+
+| # | Problem (baseline, 200 games) | Fix |
+| --- | --- | --- |
+| 1 | Games ended in ~16 moves; **99.5% completed no hand** | Spawn is skipped on any combining move (breathing room) |
+| 2 | Dragon sets impossible (**2 in 200 games**) | Bag "dragon focus" emphasises one colour when a dragon set is needed |
+| 3 | Board drowned in loose tiles (13/16 at game over) | ~66% reinforcement spawns keep the board combinable |
+| 4 | No ramp; every hand demanded 4 hard sets incl. a run | Difficulty-tiered patterns; easy opener needs no run |
+| 5 | Pungs slow, generation luck-heavy | Reinforcement completes pungs/runs; scoring rewards them |
+
+Result (150-game batch, heuristic AI), before → after:
+
+- Hand-completion rate: **0.5% → ~90%** of games reach at least one MAHJ
+- Moves per game (median): **16 → ~40** (p90 ~67, skilled tail 120+)
+- Hands per game: **0 → median 1**, p75 2, p90 3, max 7
+- Opening hand completion: **1% → ~88%**
+- Max identical consecutive spawns: capped at **3**; **0** games run forever;
+  **0%** degenerate free-hand cascades
+
+Movement and combination resolution are verified **deterministic** (same seed →
+identical board/score trajectory) by both the unit tests and a simulation test.
 
 ## Local development
 
@@ -205,6 +258,7 @@ hooks/              useGame (orchestration + persistence + feedback), useSwipe
 lib/                storage, stats, audio (Web Audio), haptics, rng, layout
 types/              shared domain types
 tests/              vitest engine tests
+tests/sim/          headless play-testing harness + balance regression
 public/             manifest.json, sw.js, generated icons
 scripts/            gen-icons.mjs (pure-Node PNG icon generator)
 ```
