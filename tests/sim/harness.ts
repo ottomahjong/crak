@@ -27,6 +27,8 @@ function eventWeight(e: CombineEvent): number {
       return 14;
     case "pair":
       return 7;
+    case "partial-run":
+      return 8; // a partial is progress toward a run, like a pair toward a pung
     default:
       return 0;
   }

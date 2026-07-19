@@ -46,6 +46,9 @@ export function code(t: Tile): string {
     if (t.dragon) return `dragon-${t.dragon}`;
     return `${t.suit}-${t.rank}`;
   }
+  if (t.setKind === "partial") {
+    return `partial:${t.suit}${t.partRanks?.join("")}`;
+  }
   const id = t.suit ? `${t.suit}${t.rank ?? ""}` : `dragon-${t.dragon}`;
   return `${t.setKind}:${id}`;
 }

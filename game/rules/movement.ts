@@ -1,6 +1,6 @@
 import type { Board, Direction, Merge, MoveResult, Slide, Tile } from "@/types";
 import { BOARD_SIZE, CELL_COUNT } from "@/types";
-import { resolveLine } from "@/game/rules/combine";
+import { resolveLine, type RuleOptions } from "@/game/rules/combine";
 
 // ---------------------------------------------------------------------------
 // Board line geometry
@@ -41,7 +41,11 @@ export function lineCellsFor(direction: Direction): number[][] {
 // Apply a move
 // ---------------------------------------------------------------------------
 
-export function applyMove(board: Board, direction: Direction): MoveResult {
+export function applyMove(
+  board: Board,
+  direction: Direction,
+  opts: RuleOptions = {},
+): MoveResult {
   const next: Board = new Array(CELL_COUNT).fill(null);
   const slides: Slide[] = [];
   const merges: Merge[] = [];
@@ -62,7 +66,7 @@ export function applyMove(board: Board, direction: Direction): MoveResult {
       }
     }
 
-    const { items, events: lineEvents } = resolveLine(tiles);
+    const { items, events: lineEvents } = resolveLine(tiles, opts);
     events.push(...lineEvents);
 
     // Place results at leading cells; compute animation deltas.
@@ -92,17 +96,68 @@ export function applyMove(board: Board, direction: Direction): MoveResult {
 // ---------------------------------------------------------------------------
 
 /** True if the given direction would change the board. */
-export function canMove(board: Board, direction: Direction): boolean {
-  return applyMove(board, direction).changed;
+export function canMove(board: Board, direction: Direction, opts: RuleOptions = {}): boolean {
+  return applyMove(board, direction, opts).changed;
 }
 
 /** True if any of the four directions is a legal move. */
-export function hasAnyMove(board: Board): boolean {
-  return (["up", "down", "left", "right"] as Direction[]).some((d) => canMove(board, d));
+export function hasAnyMove(board: Board, opts: RuleOptions = {}): boolean {
+  return (["up", "down", "left", "right"] as Direction[]).some((d) =>
+    canMove(board, d, opts),
+  );
 }
 
 /** The board is a dead end: every cell occupied and no direction changes it. */
-export function isGameOver(board: Board): boolean {
+export function isGameOver(board: Board, opts: RuleOptions = {}): boolean {
   const full = board.every((c) => c !== null);
-  return full && !hasAnyMove(board);
+  return full && !hasAnyMove(board, opts);
+}
+
+// ---------------------------------------------------------------------------
+// Spawn entry geometry
+// ---------------------------------------------------------------------------
+
+/**
+ * New tiles enter from the edge OPPOSITE the swipe: swipe left → the new tile
+ * enters at the right edge, etc. Returns cell indices line by line, starting at
+ * the entry edge and walking inward (depth 0 = the edge itself), so the caller
+ * can take the first line that has an empty cell.
+ */
+export function entryLinesFor(direction: Direction): number[][] {
+  const lines: number[][] = [];
+  for (let depth = 0; depth < BOARD_SIZE; depth++) {
+    const line: number[] = [];
+    for (let k = 0; k < BOARD_SIZE; k++) {
+      switch (direction) {
+        case "left": // enters from the right edge, walking left
+          line.push(k * BOARD_SIZE + (BOARD_SIZE - 1 - depth));
+          break;
+        case "right": // enters from the left edge, walking right
+          line.push(k * BOARD_SIZE + depth);
+          break;
+        case "up": // enters from the bottom edge, walking up
+          line.push((BOARD_SIZE - 1 - depth) * BOARD_SIZE + k);
+          break;
+        case "down": // enters from the top edge, walking down
+          line.push(depth * BOARD_SIZE + k);
+          break;
+      }
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
+/** The board side a spawned tile visually enters from, for a given swipe. */
+export function entryEdgeFor(direction: Direction): Direction {
+  switch (direction) {
+    case "left":
+      return "right";
+    case "right":
+      return "left";
+    case "up":
+      return "down"; // bottom edge
+    case "down":
+      return "up"; // top edge
+  }
 }

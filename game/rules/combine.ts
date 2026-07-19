@@ -4,31 +4,41 @@ import {
   isLooseDragon,
   isLooseNumber,
   isPair,
+  isPartialRun,
   isPung,
   isRun,
   makePair,
+  makePartialRun,
   makePung,
   makeRun,
+  missingRank,
 } from "@/game/tiles";
 
 // ---------------------------------------------------------------------------
 // Combination resolution
 // ---------------------------------------------------------------------------
 //
-// Resolution order (documented here and in the README):
-//   1. Compact the line (empty cells already removed by the caller).
-//   2. PHASE 1 — direct collisions: pairs and pungs (incl. dragon + joker),
-//      resolved greedily from the leading edge toward the trailing edge.
-//      A tile consumed here cannot be reused; a set created here is terminal.
-//   3. PHASE 2 — runs: three contiguous *loose* same-suit tiles (1-2-3, joker
-//      may fill exactly one gap) collapse into a run, again scanned from the
-//      leading edge.
-//   4. Each source tile participates in at most one combination per move.
-//   5. Pairs/pungs and completed sets never participate in runs.
+// ONE universal rule (documented here and in the README): every combination in
+// CRAK! is a TWO-TILE COLLISION, resolved greedily from the leading edge of the
+// swipe toward the trailing edge. A tile combines with the first tile it
+// touches, at most once per move, and the result is placed where the leading
+// tile was.
 //
-// The caller passes tiles in leading→trailing order. The result "anchor" id is
-// always the leading source, so the surviving element morphs in place while the
-// trailing sources slide into it (used to drive animation).
+// The complete collision table:
+//   loose X      + loose X            → PAIR of X
+//   PAIR of X    + loose X (or Joker) → PUNG of X          (terminal)
+//   dragon D     + dragon D           → DRAGON PAIR
+//   DRAGON PAIR  + dragon D (/Joker)  → DRAGON PUNG        (terminal)
+//   loose 1      + loose 2 (same suit)→ PARTIAL RUN 1·2
+//   loose 2      + loose 3 (same suit)→ PARTIAL RUN 2·3
+//   PARTIAL RUN  + missing rank (/Joker) → RUN             (terminal)
+//
+// Nothing else combines. In particular: 1+3 never combine (not adjacent),
+// jokers never start a set (no joker pairs, no joker partials, no
+// joker+joker), pungs/runs are terminal, and completed sets never join runs.
+//
+// The two-stage run replaced an earlier three-tile adjacency scan: runs now
+// follow the exact same physics as pair→pung, which is the point.
 
 export type ResolveItem = {
   tile: Tile;
@@ -39,6 +49,11 @@ export type ResolveItem = {
 export type ResolveResult = {
   items: ResolveItem[];
   events: CombineEvent[];
+};
+
+export type RuleOptions = {
+  /** When false, partial-run and run merges are disabled (learning hand 1). */
+  runs?: boolean;
 };
 
 type MergeSpec = {
@@ -52,22 +67,36 @@ function numberIdentity(t: Tile): { suit: Suit; rank: Rank } | null {
 }
 
 /**
- * Attempt to combine two adjacent tiles into a pair or pung. Order-independent
- * for identity; returns null when the two tiles cannot form a direct collision.
+ * Attempt to combine two adjacent tiles. Order-independent for identity;
+ * returns null when the two tiles cannot form a direct collision.
  */
-function tryMerge2(a: Tile, b: Tile): MergeSpec | null {
+function tryMerge2(a: Tile, b: Tile, opts: RuleOptions): MergeSpec | null {
+  const runsEnabled = opts.runs !== false;
+
   // Terminal sets never merge further.
   if (isPung(a) || isPung(b) || isRun(a) || isRun(b)) return null;
 
-  // Two loose numbers -> pair.
   const na = numberIdentity(a);
   const nb = numberIdentity(b);
-  if (na && nb && na.suit === nb.suit && na.rank === nb.rank) {
-    return {
-      make: (id) => makePair({ suit: na.suit, rank: na.rank }, false, id),
-      event: "pair",
-      usedJoker: false,
-    };
+
+  // Two loose numbers: same rank → pair; adjacent ranks → partial run.
+  if (na && nb && na.suit === nb.suit) {
+    if (na.rank === nb.rank) {
+      return {
+        make: (id) => makePair({ suit: na.suit, rank: na.rank }, false, id),
+        event: "pair",
+        usedJoker: false,
+      };
+    }
+    if (runsEnabled && Math.abs(na.rank - nb.rank) === 1) {
+      const lo = Math.min(na.rank, nb.rank) as Rank;
+      const hi = Math.max(na.rank, nb.rank) as Rank;
+      return {
+        make: (id) => makePartialRun(na.suit, [lo, hi], id),
+        event: "partial-run",
+        usedJoker: false,
+      };
+    }
   }
 
   // Two loose dragons -> dragon pair.
@@ -78,6 +107,25 @@ function tryMerge2(a: Tile, b: Tile): MergeSpec | null {
       event: "dragon-pair",
       usedJoker: false,
     };
+  }
+
+  // Partial run + missing rank (or joker) -> run.
+  const part = isPartialRun(a) ? a : isPartialRun(b) ? b : null;
+  const partOther = part === a ? b : part === b ? a : null;
+  if (runsEnabled && part && partOther && part.suit) {
+    const need = missingRank(part);
+    const suit = part.suit;
+    const fills =
+      (isLooseNumber(partOther) && partOther.suit === suit && partOther.rank === need) ||
+      isJoker(partOther);
+    if (fills) {
+      return {
+        make: (id) => makeRun(suit, isJoker(partOther), id),
+        event: "run",
+        usedJoker: isJoker(partOther),
+      };
+    }
+    return null; // a partial matches nothing else
   }
 
   // Pair + matching loose tile (or joker) -> pung.
@@ -118,85 +166,30 @@ function tryMerge2(a: Tile, b: Tile): MergeSpec | null {
 }
 
 /**
- * Determine whether three contiguous loose tiles form a run. Non-joker tiles
- * must be same-suit numbers with distinct ranks in {1,2,3}; at most one joker
- * may fill a single gap.
- */
-function runEligible(a: Tile, b: Tile, c: Tile): { suit: Suit; usedJoker: boolean } | null {
-  const tiles = [a, b, c];
-  const jokers = tiles.filter(isJoker);
-  if (jokers.length > 1) return null; // joker + joker never allowed
-  const numbers = tiles.filter(isLooseNumber);
-  if (numbers.length + jokers.length !== 3) return null; // dragons/sets disqualify
-  if (numbers.length === 0) return null;
-
-  const suit = numbers[0].suit as Suit;
-  if (!numbers.every((t) => t.suit === suit)) return null;
-
-  const ranks = numbers.map((t) => t.rank as Rank);
-  const unique = new Set(ranks);
-  if (unique.size !== ranks.length) return null; // duplicate rank -> not a run
-  if (![...unique].every((r) => r >= 1 && r <= 3)) return null;
-
-  // With no joker, we need exactly {1,2,3}. With one joker, two distinct ranks
-  // in {1,2,3} always leave a fillable gap.
-  if (jokers.length === 0 && unique.size !== 3) return null;
-
-  return { suit, usedJoker: jokers.length === 1 };
-}
-
-/**
  * Resolve a single line of tiles (leading→trailing order, no empty cells).
+ * A single greedy pass: each tile may combine with its immediate neighbor at
+ * most once. Results of a merge never chain within the same move.
  */
-export function resolveLine(input: Tile[]): ResolveResult {
+export function resolveLine(input: Tile[], opts: RuleOptions = {}): ResolveResult {
   const events: CombineEvent[] = [];
+  const items: ResolveItem[] = [];
 
-  // Phase 1: pairs & pungs.
-  const phase1: ResolveItem[] = [];
   let i = 0;
   while (i < input.length) {
     const a = input[i];
     const b = input[i + 1];
     if (b) {
-      const spec = tryMerge2(a, b);
+      const spec = tryMerge2(a, b, opts);
       if (spec) {
         const tile = spec.make(a.id); // anchor = leading source id
-        phase1.push({ tile, sources: [a.id, b.id] });
+        items.push({ tile, sources: [a.id, b.id] });
         events.push({ type: spec.event, tile, usedJoker: spec.usedJoker });
         i += 2;
         continue;
       }
     }
-    phase1.push({ tile: a, sources: [a.id] });
+    items.push({ tile: a, sources: [a.id] });
     i += 1;
-  }
-
-  // Phase 2: runs (loose tiles only).
-  const items: ResolveItem[] = [];
-  let j = 0;
-  while (j < phase1.length) {
-    const a = phase1[j];
-    const b = phase1[j + 1];
-    const c = phase1[j + 2];
-    if (
-      a &&
-      b &&
-      c &&
-      a.tile.state === "loose" &&
-      b.tile.state === "loose" &&
-      c.tile.state === "loose"
-    ) {
-      const run = runEligible(a.tile, b.tile, c.tile);
-      if (run) {
-        const tile = makeRun(run.suit, run.usedJoker, a.tile.id);
-        items.push({ tile, sources: [...a.sources, ...b.sources, ...c.sources] });
-        events.push({ type: "run", tile, usedJoker: run.usedJoker });
-        j += 3;
-        continue;
-      }
-    }
-    items.push(a);
-    j += 1;
   }
 
   return { items, events };

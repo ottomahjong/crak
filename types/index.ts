@@ -7,7 +7,11 @@ export type Rank = 1 | 2 | 3;
 export type DragonColor = "red" | "green" | "white";
 
 export type LooseTileKind = "number" | "dragon" | "joker";
-export type CompletedSetKind = "pair" | "pung" | "run";
+/**
+ * "partial" is a two-tile partial run (1·2 or 2·3 of one suit) — the visible
+ * intermediate step toward a run, exactly as a pair is the step toward a pung.
+ */
+export type CompletedSetKind = "pair" | "pung" | "run" | "partial";
 
 /**
  * A single game piece. Loose tiles are the raw draws; completed tiles are the
@@ -25,6 +29,8 @@ export type Tile = {
   dragon?: DragonColor;
   isJoker?: boolean;
   setKind?: CompletedSetKind;
+  /** For setKind "partial": the two ranks held, [1,2] or [2,3]. */
+  partRanks?: [Rank, Rank];
   /** True once this completed set has been counted toward a target slot. */
   usedForTarget?: boolean;
   /** True when a joker was consumed to complete this set. */
@@ -64,6 +70,7 @@ export type CombineEventType =
   | "pung"
   | "dragon-pair"
   | "dragon-pung"
+  | "partial-run"
   | "run";
 
 export type CombineEvent = {
@@ -110,6 +117,8 @@ export type TargetRequirement = {
   suit?: Suit;
   /** Human-readable label, e.g. "DOT SET". */
   label: string;
+  /** Plain-language label shown first during learning, e.g. "TWO MATCHING TILES". */
+  plain?: string;
   /** Filled by the id of the board tile that satisfied it. */
   filledBy?: string;
 };
@@ -149,8 +158,13 @@ export type Settings = {
   reducedMotion: boolean;
   highContrast: boolean;
   jokersEnabled: boolean;
+  /** True once the four-hand learning game has been completed (or skipped). */
   tutorialSeen: boolean;
+  /** Idle hints + next-move suggestions. Defaults on for new players. */
+  guidedPlay: boolean;
 };
+
+export type LearningStage = 1 | 2 | 3 | 4;
 
 export type GameState = {
   board: Board;
@@ -159,6 +173,8 @@ export type GameState = {
   multiplier: number;
   target: TargetPattern;
   status: GameStatus;
+  /** Set while playing the four-hand learning game; undefined in endless mode. */
+  learning?: LearningStage;
   /** Fair-bag draw pool state. */
   bag: TileTypeId[];
   /** Deterministic RNG state (mulberry32 seed). */
@@ -183,6 +199,7 @@ export type GameSnapshot = {
   multiplier: number;
   target: TargetPattern;
   status: GameStatus;
+  learning?: LearningStage;
   bag: TileTypeId[];
   rngState: number;
   recentSpawns: TileTypeId[];

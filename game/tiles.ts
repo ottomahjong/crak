@@ -77,6 +77,15 @@ export const isLooseDragon = (t: Tile) =>
 export const isPair = (t: Tile) => t.state === "completed" && t.setKind === "pair";
 export const isPung = (t: Tile) => t.state === "completed" && t.setKind === "pung";
 export const isRun = (t: Tile) => t.state === "completed" && t.setKind === "run";
+export const isPartialRun = (t: Tile) =>
+  t.state === "completed" && t.setKind === "partial";
+/** The one rank in {1,2,3} a partial run still needs. */
+export function missingRank(t: Tile): 1 | 2 | 3 | null {
+  if (!isPartialRun(t) || !t.partRanks) return null;
+  const have = new Set<number>(t.partRanks);
+  for (const r of [1, 2, 3] as const) if (!have.has(r)) return r;
+  return null;
+}
 export const isDragonSet = (t: Tile) =>
   t.state === "completed" && !!t.dragon && (t.setKind === "pair" || t.setKind === "pung");
 export const isNumberSet = (t: Tile) =>
@@ -106,6 +115,14 @@ export function makeRun(suit: Suit, usedJoker = false, id = newTileId("run")): T
   return { id, state: "completed", setKind: "run", suit, usedJoker };
 }
 
+export function makePartialRun(
+  suit: Suit,
+  partRanks: [Rank, Rank],
+  id = newTileId("part"),
+): Tile {
+  return { id, state: "completed", setKind: "partial", suit, partRanks };
+}
+
 // ---------------------------------------------------------------------------
 // Accessible labels
 // ---------------------------------------------------------------------------
@@ -124,6 +141,9 @@ export function tileLabel(tile: Tile): string {
     if (tile.suit && tile.rank) return `${tile.rank} ${SUIT_LABEL[tile.suit]}`;
     return "Tile";
   }
+  if (tile.setKind === "partial" && tile.suit && tile.partRanks) {
+    return `${SUIT_LABEL[tile.suit]} ${tile.partRanks[0]}-${tile.partRanks[1]}, needs ${missingRank(tile)}`;
+  }
   const kind = tile.setKind === "pair" ? "Pair" : tile.setKind === "pung" ? "Pung" : "Run";
   if (tile.setKind === "run" && tile.suit) return `${SUIT_LABEL[tile.suit]} Run`;
   if (tile.dragon) return `${DRAGON_LABEL[tile.dragon]} ${kind}`;
@@ -136,5 +156,7 @@ export function setKindLabel(tile: Tile): string {
   if (tile.setKind === "pair") return "PAIR";
   if (tile.setKind === "pung") return "PUNG";
   if (tile.setKind === "run") return "RUN";
+  if (tile.setKind === "partial" && tile.partRanks)
+    return `${tile.partRanks[0]}·${tile.partRanks[1]}`;
   return "";
 }

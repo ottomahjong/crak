@@ -6,6 +6,7 @@ import type { CombineEvent } from "@/types";
 
 export const SCORING = {
   pair: 20,
+  partialRun: 10, // 1·2 or 2·3 started — small nudge, real payoff on completion
   numberPung: 120, // pungs cost two moves + free a cell → reward them
   dragonPair: 45,
   dragonPung: 200,
@@ -21,6 +22,8 @@ export function scoreForEvent(event: CombineEvent): number {
   switch (event.type) {
     case "pair":
       return SCORING.pair;
+    case "partial-run":
+      return SCORING.partialRun;
     case "pung":
       return SCORING.numberPung;
     case "dragon-pair":

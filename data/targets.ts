@@ -1,4 +1,10 @@
-import type { Suit, TargetPattern, TargetRequirement } from "@/types";
+import type {
+  LearningStage,
+  Suit,
+  TargetPattern,
+  TargetRequirement,
+  TargetRequirementKind,
+} from "@/types";
 import { newTileId } from "@/game/tiles";
 import { nextRandom } from "@/lib/rng";
 
@@ -15,8 +21,40 @@ function req(
   kind: TargetRequirement["kind"],
   label: string,
   suit?: Suit,
+  plain?: string,
 ): Omit<TargetRequirement, "id"> {
-  return { kind, label, suit };
+  return { kind, label, suit, plain: plain ?? PLAIN_LABEL[kind] };
+}
+
+/** Plain-language-first labels, shown before the Mahjong term during learning. */
+export const PLAIN_LABEL: Record<TargetRequirementKind, string> = {
+  "any-pair": "TWO MATCHING TILES",
+  "number-pung": "THREE MATCHING TILES",
+  "suited-run": "1 + 2 + 3, SAME SUIT",
+  "dragon-set": "MATCHING DRAGONS",
+  "suit-set": "A SET OF ONE SUIT",
+  "suit-run": "1 + 2 + 3 OF THIS SUIT",
+  "any-set": "ANY THREE-TILE SET",
+};
+
+/** One-sentence explanation for each requirement kind (shown on tap). */
+export function explainRequirement(r: Pick<TargetRequirement, "kind" | "suit">): string {
+  switch (r.kind) {
+    case "any-pair":
+      return "Slide two identical tiles together — they fuse into a Pair.";
+    case "number-pung":
+      return "A Pair plus one more matching tile makes a Pung (three of a kind).";
+    case "suited-run":
+      return "Join 1+2 (or 2+3) of one suit, then add the missing number: a Run.";
+    case "dragon-set":
+      return "Two matching dragons make a pair; add a third for a pung. Either counts.";
+    case "suit-set":
+      return `A pung or run made only of ${r.suit ?? "one"} tiles.`;
+    case "suit-run":
+      return `A 1-2-3 run in ${r.suit ?? "this suit"}.`;
+    case "any-set":
+      return "Any pung (three of a kind) or run (1-2-3) counts here.";
+  }
 }
 
 type PatternTemplate = {
@@ -132,6 +170,54 @@ export const PATTERN_TEMPLATES: PatternTemplate[] = [
 ];
 
 export const OPENING_PATTERN_ID = "OPEN";
+
+// ---------------------------------------------------------------------------
+// Learning-game hands (one new concept per hand; not used in endless rotation)
+// ---------------------------------------------------------------------------
+
+const LEARNING_TEMPLATES: Record<LearningStage, { name: string; requirements: Omit<TargetRequirement, "id">[] }> = {
+  1: {
+    name: "Your First Hand",
+    requirements: [
+      req("any-pair", "Pair", undefined, "TWO MATCHING TILES"),
+      req("number-pung", "Pung", undefined, "THREE MATCHING TILES"),
+    ],
+  },
+  2: {
+    name: "Learn the Run",
+    requirements: [
+      req("any-pair", "Pair", undefined, "TWO MATCHING TILES"),
+      req("number-pung", "Pung", undefined, "THREE MATCHING TILES"),
+      req("suited-run", "Run", undefined, "1 + 2 + 3, SAME SUIT"),
+    ],
+  },
+  3: {
+    name: "Meet the Dragons",
+    requirements: [
+      req("any-pair", "Pair", undefined, "TWO MATCHING TILES"),
+      req("any-set", "Any Set", undefined, "ANY PUNG OR RUN"),
+      req("dragon-set", "Dragon Set", undefined, "MATCHING DRAGONS"),
+    ],
+  },
+  4: {
+    name: "The Joker",
+    requirements: [
+      req("any-pair", "Pair", undefined, "TWO MATCHING TILES"),
+      req("number-pung", "Pung", undefined, "THREE MATCHING TILES"),
+      req("suited-run", "Run", undefined, "1 + 2 + 3, SAME SUIT"),
+      req("dragon-set", "Dragon Set", undefined, "MATCHING DRAGONS"),
+    ],
+  },
+};
+
+export function instantiateLearningPattern(stage: LearningStage): TargetPattern {
+  const t = LEARNING_TEMPLATES[stage];
+  return {
+    id: `LEARN${stage}`,
+    name: t.name,
+    requirements: t.requirements.map((r) => ({ ...r, id: newTileId("req") })),
+  };
+}
 
 export function patternDifficulty(id: string): number {
   return PATTERN_TEMPLATES.find((t) => t.id === id)?.difficulty ?? 2;

@@ -25,6 +25,7 @@ export const DEFAULT_SETTINGS: Settings = {
   highContrast: false,
   jokersEnabled: true,
   tutorialSeen: false,
+  guidedPlay: true,
 };
 
 export const DEFAULT_STATS: Stats = {

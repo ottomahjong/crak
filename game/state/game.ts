@@ -4,13 +4,15 @@ import type {
   Direction,
   GameSnapshot,
   GameState,
+  LearningStage,
   Suit,
   Tile,
   TargetPattern,
   TileTypeId,
 } from "@/types";
 import { CELL_COUNT } from "@/types";
-import { applyMove, hasAnyMove } from "@/game/rules/movement";
+import { applyMove, entryLinesFor, hasAnyMove } from "@/game/rules/movement";
+import type { RuleOptions } from "@/game/rules/combine";
 import { reconcileTargets } from "@/game/rules/targets";
 import { scoreForEvents, handCompletionScore, SCORING } from "@/game/scoring";
 import {
@@ -24,6 +26,7 @@ import {
 import { nextRandom, randomSeed } from "@/lib/rng";
 import {
   instantiatePattern,
+  instantiateLearningPattern,
   pickPatternForRound,
   OPENING_PATTERN_ID,
 } from "@/data/targets";
@@ -32,6 +35,36 @@ import { makeLooseFromType } from "@/game/tiles";
 const STARTING_TILES = 4;
 /** Minimum tiles the board must hold after a hand cashes in, to stay playable. */
 const MIN_TILES_AFTER_HAND = 4;
+
+// ---------------------------------------------------------------------------
+// Learning game (four hands, one concept at a time)
+// ---------------------------------------------------------------------------
+
+const DOTS: TileTypeId[] = ["dot-1", "dot-2", "dot-3"];
+const BAMS: TileTypeId[] = ["bam-1", "bam-2", "bam-3"];
+const DRAGONS: TileTypeId[] = ["dragon-red", "dragon-green", "dragon-white"];
+
+/** Tile families available per learning hand. undefined = full pool (endless). */
+export function learningPool(stage: LearningStage | undefined): Set<TileTypeId> | undefined {
+  switch (stage) {
+    case 1:
+      return new Set(DOTS);
+    case 2:
+      return new Set([...DOTS, ...BAMS]);
+    case 3:
+      return new Set([...DOTS, ...BAMS, ...DRAGONS]);
+    case 4:
+      return new Set([...DOTS, ...BAMS, ...DRAGONS, "joker"]);
+    default:
+      return undefined;
+  }
+}
+
+/** Rules active for a state: hand 1 has runs disabled so partials cannot
+ * appear before they are taught. */
+export function ruleOptsFor(state: Pick<GameState, "learning">): RuleOptions {
+  return { runs: state.learning !== 1 };
+}
 
 // ---------------------------------------------------------------------------
 // Snapshot helpers (used for undo)
@@ -52,6 +85,7 @@ export function snapshot(state: GameState): GameSnapshot {
     handsCompleted: state.handsCompleted,
     setsCreated: state.setsCreated,
     suitCounts: { ...state.suitCounts },
+    learning: state.learning,
   };
 }
 
@@ -75,6 +109,7 @@ export function restoreSnapshot(state: GameState, snap: GameSnapshot): GameState
     handsCompleted: snap.handsCompleted,
     setsCreated: snap.setsCreated,
     suitCounts: { ...snap.suitCounts },
+    learning: snap.learning,
     // Undo is consumed by the caller.
   };
 }
@@ -98,12 +133,35 @@ type SpawnOutcome = {
   spawnedTile: Tile | null;
 };
 
+/**
+ * Choose the spawn cell. With a swipe direction, the tile enters from the edge
+ * OPPOSITE the swipe (swipe left → right edge): the first entry line (edge,
+ * then walking inward) that has an empty cell is used, picked deterministically
+ * via the RNG. Without a direction (initial deal, round top-up), any empty
+ * cell is used.
+ */
+function pickSpawnCell(
+  board: Board,
+  direction: Direction | undefined,
+  rngState: number,
+): { cell: number; rngState: number } {
+  if (direction) {
+    for (const line of entryLinesFor(direction)) {
+      const empty = line.filter((c) => !board[c]);
+      if (empty.length > 0) return pickEmptyCell(empty, rngState);
+    }
+  }
+  return pickEmptyCell(emptyCells(board), rngState);
+}
+
 function spawnOne(
   board: Board,
   target: TargetPattern,
   bag: GameState["bag"],
   rngState: number,
   recentSpawns: GameState["recentSpawns"],
+  direction?: Direction,
+  allowed?: ReadonlySet<TileTypeId>,
 ): SpawnOutcome {
   const empties = emptyCells(board);
   if (empties.length === 0) {
@@ -121,8 +179,9 @@ function spawnOne(
   const jokerRoll = nextRandom(rs);
   rs = jokerRoll.state;
   const lastSpawn = recentSpawns[recentSpawns.length - 1];
-  if (jokerRoll.value < JOKER_SPAWN_P && lastSpawn !== "joker") {
-    const placedJ = pickEmptyCell(empties, rs);
+  const jokerAllowed = !allowed || allowed.has("joker");
+  if (jokerAllowed && jokerRoll.value < JOKER_SPAWN_P && lastSpawn !== "joker") {
+    const placedJ = pickSpawnCell(board, direction, rs);
     const jokerTile = makeLooseFromType("joker");
     const jb = board.slice();
     jb[placedJ.cell] = jokerTile;
@@ -149,7 +208,7 @@ function spawnOne(
     let trailing = 0;
     for (let i = recentSpawns.length - 1; i >= 0 && recentSpawns[i] === last; i--) trailing++;
     const avoid = trailing >= 2 ? last : undefined;
-    const h = helpfulSpawn(board, target, rs, avoid);
+    const h = helpfulSpawn(board, target, rs, avoid, allowed);
     rs = h.rngState;
     reinforced = h.type;
   }
@@ -158,14 +217,14 @@ function spawnOne(
     type = reinforced;
     nextRecent = [...recentSpawns, type].slice(-8);
   } else {
-    const draw = drawTile({ bag, rngState: rs, recentSpawns }, target, board);
+    const draw = drawTile({ bag, rngState: rs, recentSpawns }, target, board, allowed);
     type = draw.type;
     nextBag = draw.bag;
     rs = draw.rngState;
     nextRecent = draw.recentSpawns;
   }
 
-  const placed = pickEmptyCell(empties, rs);
+  const placed = pickSpawnCell(board, direction, rs);
   const tile = makeLooseFromType(type);
   const nextBoard = board.slice();
   nextBoard[placed.cell] = tile;
@@ -183,24 +242,39 @@ function spawnOne(
 // Initial state
 // ---------------------------------------------------------------------------
 
-export function createInitialState(seed = randomSeed()): GameState {
-  const target = instantiatePattern(OPENING_PATTERN_ID);
+export function createInitialState(
+  seed = randomSeed(),
+  learning?: LearningStage,
+): GameState {
+  const target = learning
+    ? instantiateLearningPattern(learning)
+    : instantiatePattern(OPENING_PATTERN_ID);
   let board: Board = new Array(CELL_COUNT).fill(null);
   let bag: GameState["bag"] = [];
   let rngState = seed >>> 0 || 1;
   let recentSpawns: GameState["recentSpawns"] = [];
+  const allowed = learningPool(learning);
 
   // Prime the bag.
-  const primed = buildBag(target, rngState, board);
+  const primed = buildBag(target, rngState, board, allowed);
   bag = primed.bag;
   rngState = primed.rngState;
 
-  for (let i = 0; i < STARTING_TILES; i++) {
-    const out = spawnOne(board, target, bag, rngState, recentSpawns);
-    board = out.board;
-    bag = out.bag;
-    rngState = out.rngState;
-    recentSpawns = out.recentSpawns;
+  if (learning === 1) {
+    // Fixed opening layout for the very first hand: the two 1 Dots pair up on
+    // the player's first left or right swipe — the first "aha" is one move away.
+    board[4] = makeLooseFromType("dot-1"); // row 1, col 0
+    board[7] = makeLooseFromType("dot-1"); // row 1, col 3
+    board[2] = makeLooseFromType("dot-2"); // row 0, col 2
+    board[13] = makeLooseFromType("dot-2"); // row 3, col 1
+  } else {
+    for (let i = 0; i < STARTING_TILES; i++) {
+      const out = spawnOne(board, target, bag, rngState, recentSpawns, undefined, allowed);
+      board = out.board;
+      bag = out.bag;
+      rngState = out.rngState;
+      recentSpawns = out.recentSpawns;
+    }
   }
 
   return {
@@ -210,6 +284,7 @@ export function createInitialState(seed = randomSeed()): GameState {
     multiplier: 1,
     target,
     status: "playing",
+    learning,
     bag,
     rngState,
     recentSpawns,
@@ -239,6 +314,8 @@ export type MoveOutcome = {
   merges: ReturnType<typeof applyMove>["merges"];
   spawnedCell: number | null;
   spawnedTile: Tile | null;
+  /** The board edge the spawned tile visually enters from (opposite the swipe). */
+  spawnEntry: Direction | null;
 };
 
 export function move(state: GameState, direction: Direction): MoveOutcome {
@@ -255,11 +332,13 @@ export function move(state: GameState, direction: Direction): MoveOutcome {
       merges: [],
       spawnedCell: null,
       spawnedTile: null,
+      spawnEntry: null,
     };
   }
 
+  const ruleOpts = ruleOptsFor(state);
   const snap = snapshot(state);
-  const raw = applyMove(state.board, direction);
+  const raw = applyMove(state.board, direction, ruleOpts);
 
   if (!raw.changed) {
     // Invalid move: no tile spawns, nothing changes.
@@ -275,6 +354,7 @@ export function move(state: GameState, direction: Direction): MoveOutcome {
       merges: raw.merges,
       spawnedCell: null,
       spawnedTile: null,
+      spawnEntry: null,
     };
   }
 
@@ -312,11 +392,15 @@ export function move(state: GameState, direction: Direction): MoveOutcome {
         state.bag,
         state.rngState,
         state.recentSpawns,
+        direction,
+        learningPool(state.learning),
       );
 
   const handCompleted = reconciled.complete;
   const gameOver =
-    !handCompleted && emptyCells(spawn.board).length === 0 && !hasAnyMove(spawn.board);
+    !handCompleted &&
+    emptyCells(spawn.board).length === 0 &&
+    !hasAnyMove(spawn.board, ruleOpts);
 
   const nextState: GameState = {
     ...state,
@@ -345,7 +429,22 @@ export function move(state: GameState, direction: Direction): MoveOutcome {
     merges: raw.merges,
     spawnedCell: spawn.spawnedCell,
     spawnedTile: spawn.spawnedTile,
+    spawnEntry: spawn.spawnedTile ? entryEdgeForSwipe(direction) : null,
   };
+}
+
+/** The visual edge a spawn enters from, given the swipe that caused it. */
+function entryEdgeForSwipe(direction: Direction): Direction {
+  switch (direction) {
+    case "left":
+      return "right";
+    case "right":
+      return "left";
+    case "up":
+      return "down";
+    case "down":
+      return "up";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -367,6 +466,11 @@ export type HandCompletionResult = {
   bonus: number;
   emptyCells: number;
   removedTiles: number;
+  /** Set when a learning hand was just completed: what comes next. */
+  learningAdvance?: {
+    completedStage: LearningStage;
+    nextStage: LearningStage | null; // null = learning finished, endless begins
+  };
 };
 
 export function completeHand(state: GameState): HandCompletionResult {
@@ -381,9 +485,34 @@ export function completeHand(state: GameState): HandCompletionResult {
   for (const r of state.target.requirements) if (r.filledBy) cashedIds.add(r.filledBy);
   const board: Board = state.board.map((t) => (t && cashedIds.has(t.id) ? null : t));
 
-  const nextRound = state.round + 1;
-  const picked = pickPatternForRound(nextRound, state.target.id, state.rngState);
-  const reconciled = reconcileTargets(picked.pattern, board);
+  // Learning progression: each learning hand advances one stage; after the
+  // fourth, endless mode begins (round resets so the difficulty ramp starts
+  // from its easy tier — the player keeps their score).
+  let learningAdvance: HandCompletionResult["learningAdvance"];
+  let nextLearning: LearningStage | undefined = undefined;
+  let nextRound = state.round + 1;
+  let pattern: TargetPattern;
+  let rngAfterPick = state.rngState;
+
+  if (state.learning) {
+    const completedStage = state.learning;
+    if (completedStage < 4) {
+      nextLearning = (completedStage + 1) as LearningStage;
+      pattern = instantiateLearningPattern(nextLearning);
+      learningAdvance = { completedStage, nextStage: nextLearning };
+    } else {
+      nextLearning = undefined;
+      nextRound = 1;
+      pattern = instantiatePattern(OPENING_PATTERN_ID);
+      learningAdvance = { completedStage, nextStage: null };
+    }
+  } else {
+    const picked = pickPatternForRound(nextRound, state.target.id, state.rngState);
+    pattern = picked.pattern;
+    rngAfterPick = picked.rngState;
+  }
+
+  const reconciled = reconcileTargets(pattern, board);
 
   // Guarantee the next round is playable. If cashing in the hand left the board
   // empty (or nearly so — e.g. the whole board WAS the four scoring sets), seed
@@ -391,11 +520,20 @@ export function completeHand(state: GameState): HandCompletionResult {
   // move, and spawns only happen after a move.
   let seededBoard = reconciled.board;
   let bag = state.bag;
-  let rngState = picked.rngState;
+  let rngState = rngAfterPick;
   let recentSpawns = state.recentSpawns;
   let tileCount = seededBoard.filter(Boolean).length;
+  const allowed = learningPool(nextLearning);
   while (tileCount < MIN_TILES_AFTER_HAND) {
-    const out = spawnOne(seededBoard, reconciled.target, bag, rngState, recentSpawns);
+    const out = spawnOne(
+      seededBoard,
+      reconciled.target,
+      bag,
+      rngState,
+      recentSpawns,
+      undefined,
+      allowed,
+    );
     if (out.spawnedTile == null) break; // board full (shouldn't happen here)
     seededBoard = out.board;
     bag = out.bag;
@@ -412,13 +550,20 @@ export function completeHand(state: GameState): HandCompletionResult {
     round: nextRound,
     multiplier: Math.round((state.multiplier + SCORING.multiplierStep) * 100) / 100,
     handsCompleted: state.handsCompleted + 1,
+    learning: nextLearning,
     bag,
     rngState,
     recentSpawns,
     status: "playing",
   };
 
-  return { state: nextState, bonus, emptyCells: empties, removedTiles: cashedIds.size };
+  return {
+    state: nextState,
+    bonus,
+    emptyCells: empties,
+    removedTiles: cashedIds.size,
+    learningAdvance,
+  };
 }
 
 /** Force a fresh target pattern (debug / testing). */
