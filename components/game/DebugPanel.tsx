@@ -17,15 +17,18 @@ import {
 type Props = {
   game: GameState;
   onApply: (g: GameState) => void;
+  metrics?: import("@/hooks/useGame").EvalMetrics;
 };
 
 function emptyBoard(): Board {
   return new Array(CELL_COUNT).fill(null);
 }
 
-export function DebugPanel({ game, onApply }: Props) {
+export function DebugPanel({ game, onApply, metrics }: Props) {
   const [open, setOpen] = useState(false);
   const [spawn, setSpawn] = useState<TileTypeId>("dot-1");
+
+  const learn = (stage: 1 | 2 | 3 | 4) => onApply(createInitialState(undefined, stage));
 
   const withBoard = (board: Board, patternId = game.target.id): GameState => {
     const pattern = instantiatePattern(patternId);
@@ -102,6 +105,30 @@ export function DebugPanel({ game, onApply }: Props) {
         <button className="btn btn--sm" onClick={clearBoard}>Clear board</button>
         <button className="btn btn--sm" onClick={reset}>Fresh game</button>
       </div>
+
+      <div className="debug-grid">
+        <button className="btn btn--sm" onClick={() => learn(1)}>Learn 1 (dots)</button>
+        <button className="btn btn--sm" onClick={() => learn(2)}>Learn 2 (runs)</button>
+        <button className="btn btn--sm" onClick={() => learn(3)}>Learn 3 (dragons)</button>
+        <button className="btn btn--sm" onClick={() => learn(4)}>Learn 4 (joker)</button>
+      </div>
+
+      {metrics && (
+        <div className="debug-eval">
+          <strong>Comprehension eval</strong>
+          <div className="debug-eval__grid">
+            <span>moves</span><span>{metrics.moves}</span>
+            <span>→ first pair</span><span>{metrics.firstPairMove ?? "—"}</span>
+            <span>→ first pung</span><span>{metrics.firstPungMove ?? "—"}</span>
+            <span>→ first target</span><span>{metrics.firstTargetMove ?? "—"}</span>
+            <span>→ first Mahj</span><span>{metrics.firstMahjMove ?? "—"}</span>
+            <span>invalid swipes</span><span>{metrics.invalidSwipes}</span>
+            <span>off-hand sets</span><span>{metrics.setsNotMatched}</span>
+            <span>help opened</span><span>{metrics.helpOpened}</span>
+            <span>restarted early</span><span>{metrics.restartedBeforeHand ? "yes" : "no"}</span>
+          </div>
+        </div>
+      )}
 
       <div className="debug-row">
         <label>

@@ -64,6 +64,12 @@ export function SettingsScreen({ settings, onChange, onReplayTutorial, onResetDa
           checked={settings.theme === "dark"}
           onChange={(v) => onChange({ theme: v ? "dark" : "light" })}
         />
+        <Toggle
+          label="Guided Play"
+          checked={settings.guidedPlay}
+          onChange={(v) => onChange({ guidedPlay: v })}
+          hint="Idle hints and next-move suggestions"
+        />
         <Toggle label="Reduced motion" checked={settings.reducedMotion} onChange={(v) => onChange({ reducedMotion: v })} />
         <Toggle label="High-contrast labels" checked={settings.highContrast} onChange={(v) => onChange({ highContrast: v })} />
         <Toggle
@@ -74,7 +80,7 @@ export function SettingsScreen({ settings, onChange, onReplayTutorial, onResetDa
         />
 
         <button className="btn btn--block" onClick={onReplayTutorial}>
-          Replay tutorial
+          Replay learning game
         </button>
 
         {confirming ? (

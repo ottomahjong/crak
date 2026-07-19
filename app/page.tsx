@@ -6,11 +6,10 @@ import { Home } from "@/components/screens/Home";
 import { Pause } from "@/components/screens/Pause";
 import { Statistics } from "@/components/screens/Statistics";
 import { SettingsScreen } from "@/components/screens/SettingsScreen";
-import { Tutorial } from "@/components/screens/Tutorial";
 import { GameScreen } from "@/components/game/GameScreen";
 import { DebugPanel } from "@/components/game/DebugPanel";
 
-type Screen = "home" | "game" | "pause" | "stats" | "settings" | "tutorial";
+type Screen = "home" | "game" | "pause" | "stats" | "settings";
 
 export default function Page() {
   const g = useGame();
@@ -25,19 +24,17 @@ export default function Page() {
     root.classList.toggle("high-contrast", g.settings.highContrast);
   }, [g.settings.theme, g.settings.reducedMotion, g.settings.highContrast]);
 
-  // First run → nudge into the tutorial once.
-  useEffect(() => {
-    if (g.ready && !g.settings.tutorialSeen) {
-      setScreen((s) => (s === "home" ? "tutorial" : s));
-    }
-  }, [g.ready, g.settings.tutorialSeen]);
-
   const debugEnabled = useMemo(() => {
     if (typeof window === "undefined") return false;
     if (process.env.NODE_ENV !== "production") return true;
     return new URLSearchParams(window.location.search).has("debug");
   }, []);
 
+  const startLearning = () => {
+    g.updateSettings({ tutorialSeen: true });
+    g.startLearningGame();
+    setScreen("game");
+  };
   const play = () => {
     g.startNewGame();
     setScreen("game");
@@ -46,10 +43,14 @@ export default function Page() {
     g.continueGame();
     setScreen("game");
   };
-  const finishTutorial = () => {
-    g.updateSettings({ tutorialSeen: true });
-    setScreen("home");
-  };
+
+  // First run → straight into the four-hand learning game (teaches by playing).
+  useEffect(() => {
+    if (g.ready && !g.settings.tutorialSeen) {
+      startLearning();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [g.ready, g.settings.tutorialSeen]);
 
   if (!g.ready) {
     return <div className="screen boot" aria-busy="true" />;
@@ -63,10 +64,7 @@ export default function Page() {
           hasSave={g.hasSave}
           onPlay={play}
           onContinue={cont}
-          onTutorial={() => {
-            setReturnTo("home");
-            setScreen("tutorial");
-          }}
+          onTutorial={startLearning}
           onStats={() => {
             setReturnTo("home");
             setScreen("stats");
@@ -97,10 +95,7 @@ export default function Page() {
             g.startNewGame();
             setScreen("game");
           }}
-          onHowTo={() => {
-            setReturnTo("pause");
-            setScreen("tutorial");
-          }}
+          onHowTo={startLearning}
           onSettings={() => {
             setReturnTo("pause");
             setScreen("settings");
@@ -120,10 +115,7 @@ export default function Page() {
         <SettingsScreen
           settings={g.settings}
           onChange={g.updateSettings}
-          onReplayTutorial={() => {
-            setReturnTo("settings");
-            setScreen("tutorial");
-          }}
+          onReplayTutorial={startLearning}
           onResetData={() => {
             g.setStats({
               gamesPlayed: 0,
@@ -145,10 +137,8 @@ export default function Page() {
         />
       )}
 
-      {screen === "tutorial" && <Tutorial onDone={finishTutorial} />}
-
       {debugEnabled && screen === "game" && g.game && (
-        <DebugPanel game={g.game} onApply={g.replaceGame} />
+        <DebugPanel game={g.game} onApply={g.replaceGame} metrics={g.evalMetrics} />
       )}
     </main>
   );

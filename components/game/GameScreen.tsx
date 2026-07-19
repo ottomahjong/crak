@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { UseGame } from "@/hooks/useGame";
 import { useKeyboard, useSwipe } from "@/hooks/useSwipe";
 import { Board } from "./Board";
@@ -8,6 +8,8 @@ import { TargetHand } from "./TargetHand";
 import { TopBar } from "./TopBar";
 import { MahjOverlay } from "./MahjOverlay";
 import { GameOverOverlay } from "./GameOverOverlay";
+import { HowSetsWork } from "./HowSetsWork";
+import { LearningIntro } from "./LearningIntro";
 
 type Props = {
   g: UseGame;
@@ -16,9 +18,19 @@ type Props = {
   onOpenStats: () => void;
 };
 
+const EDGE_TEXT: Record<string, string> = {
+  right: "the right",
+  left: "the left",
+  up: "the top",
+  down: "the bottom",
+};
+
 export function GameScreen({ g, onPause, onExit, onOpenStats }: Props) {
   const { game, settings, stats } = g;
-  const enabled = !!game && game.status === "playing" && g.overlay === null;
+  const [showHelp, setShowHelp] = useState(false);
+  const learning = !!game?.learning;
+  const enabled =
+    !!game && game.status === "playing" && g.overlay === null && !g.learningIntro && !showHelp;
 
   const boardRef = useSwipe<HTMLDivElement>({ onSwipe: g.doMove, enabled });
   useKeyboard(g.doMove, enabled);
@@ -29,7 +41,15 @@ export function GameScreen({ g, onPause, onExit, onOpenStats }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const hintIds = useMemo(
+    () => new Set(g.hint?.ids ?? []),
+    [g.hint],
+  );
+
   if (!game) return null;
+
+  // First-time spawn callout: only during the first few swipes of a game.
+  const showSpawnCallout = g.spawnEntry != null && g.swipeCount <= 3;
 
   return (
     <div className="screen game-screen">
@@ -41,7 +61,7 @@ export function GameScreen({ g, onPause, onExit, onOpenStats }: Props) {
         onPause={onPause}
       />
 
-      <TargetHand target={game.target} />
+      <TargetHand target={game.target} learning={learning} onExplainOpen={g.noteHelpOpened} />
 
       <div className="board-wrap">
         <Board
@@ -50,13 +70,24 @@ export function GameScreen({ g, onPause, onExit, onOpenStats }: Props) {
           ghosts={g.ghosts}
           newTileIds={g.newTileIds}
           combinedIds={g.combinedIds}
+          hiddenSpawnId={g.hiddenSpawnId}
+          spawnEntry={g.spawnEntry}
+          hintIds={hintIds}
+          showLearningLabels={learning}
           highContrast={settings.highContrast}
           reducedMotion={settings.reducedMotion}
         />
       </div>
 
+      {/* Guided-play suggestion + status line. */}
       <div className="status-row" aria-live="polite">
-        {g.message && <span className="status-msg">{g.message}</span>}
+        {g.message ? (
+          <span className="status-msg">{g.message}</span>
+        ) : g.hint && settings.guidedPlay ? (
+          <span className="status-hint">{g.hint.text}</span>
+        ) : showSpawnCallout ? (
+          <span className="status-hint">A new tile entered from {EDGE_TEXT[g.spawnEntry!]}.</span>
+        ) : null}
       </div>
 
       <div className="game-controls">
@@ -72,18 +103,30 @@ export function GameScreen({ g, onPause, onExit, onOpenStats }: Props) {
           </svg>
           Undo{game.undoAvailable ? "" : " ✕"}
         </button>
-        <button className="ctrl-btn" onClick={onOpenStats} aria-label="Statistics">
-          Stats
+        <button
+          className="ctrl-btn"
+          onClick={() => {
+            g.noteHelpOpened();
+            setShowHelp(true);
+          }}
+          aria-label="How sets work"
+        >
+          How to play
         </button>
         <button className="ctrl-btn" onClick={onPause} aria-label="Menu">
           Menu
         </button>
       </div>
 
+      {g.learningIntro && (
+        <LearningIntro stage={g.learningIntro} onStart={g.dismissLearningIntro} />
+      )}
+      {showHelp && <HowSetsWork onClose={() => setShowHelp(false)} />}
       {g.overlay === "mahj" && g.handSummary && (
         <MahjOverlay
           bonus={g.handSummary.bonus}
           round={game.round}
+          learning={game.learning}
           onContinue={g.continueAfterHand}
         />
       )}

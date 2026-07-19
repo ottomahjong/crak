@@ -5,6 +5,8 @@
 
 type SoundName =
   | "move"
+  | "spawn"
+  | "partial"
   | "pair"
   | "pung"
   | "run"
@@ -66,6 +68,15 @@ export function playSound(name: SoundName) {
   switch (name) {
     case "move":
       tone(c, 220, t, 0.08, "sine", 0.05);
+      break;
+    case "spawn":
+      // A soft two-tone "drop" — distinct from any combine click.
+      tone(c, 392, t, 0.06, "sine", 0.05);
+      tone(c, 261.63, t + 0.05, 0.09, "sine", 0.05);
+      break;
+    case "partial":
+      // A single mid note — "started, not finished".
+      tone(c, 466.16, t, 0.1, "triangle", 0.09);
       break;
     case "pair":
       tone(c, 523.25, t, 0.12, "triangle", 0.12); // ceramic click

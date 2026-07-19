@@ -64,20 +64,52 @@ function Mini({ tile }: { tile: Tile }) {
   return null;
 }
 
-function CompletedFace({ tile }: { tile: Tile }) {
+const RIBBON: Record<string, string> = {
+  pair: "PAIR",
+  pung: "PUNG",
+  run: "RUN",
+  partial: "RUN…",
+};
+
+function CompletedFace({ tile, learningLabel }: { tile: Tile; learningLabel?: boolean }) {
   const accent = accentFor(tile);
   const kind = tile.setKind!;
-  const count = kind === "pair" ? 2 : 3;
 
+  // Partial run: show the two ranks + a faded "needs N" so the next step reads.
+  if (kind === "partial" && tile.partRanks) {
+    const need = tile.partRanks.includes(1)
+      ? tile.partRanks.includes(2)
+        ? 3
+        : 2
+      : 1;
+    return (
+      <div
+        className="relative flex h-full w-full flex-col items-center justify-center gap-0.5"
+        style={{ color: accent }}
+      >
+        <span className="composite-ribbon">RUN…</span>
+        <div className="flex items-end gap-0.5 font-display font-bold" style={{ fontSize: "clamp(13px, 4.5vw, 20px)" }}>
+          <span>{tile.partRanks[0]}</span>
+          <span>{tile.partRanks[1]}</span>
+          <span className="partial-need">+{need}</span>
+        </div>
+        <div className="flex items-center justify-center gap-0.5">
+          <Mini tile={tile} />
+        </div>
+      </div>
+    );
+  }
+
+  const count = kind === "pair" ? 2 : 3;
   return (
     <div className="relative flex h-full w-full flex-col items-center justify-center gap-0.5" style={{ color: accent }}>
-      <span className="composite-ribbon">{kind.toUpperCase()}</span>
+      <span className="composite-ribbon">{learningLabel ? RIBBON[kind] ?? kind.toUpperCase() : kind.toUpperCase()}</span>
 
       {kind === "run" ? (
         <div className="flex items-end gap-0.5 font-display font-bold" style={{ fontSize: "clamp(13px, 4.5vw, 20px)" }}>
           <span>1</span>
-          <span style={{ opacity: 0.55 }}>2</span>
-          <span style={{ opacity: 0.35 }}>3</span>
+          <span style={{ opacity: 0.7 }}>2</span>
+          <span style={{ opacity: 0.5 }}>3</span>
         </div>
       ) : (
         <span className="font-display font-bold leading-none" style={{ fontSize: "clamp(18px, 6vw, 28px)" }}>
@@ -101,14 +133,22 @@ function CompletedFace({ tile }: { tile: Tile }) {
   );
 }
 
-export function TileFace({ tile, highContrast }: { tile: Tile; highContrast: boolean }) {
+export function TileFace({
+  tile,
+  highContrast,
+  learningLabel,
+}: {
+  tile: Tile;
+  highContrast: boolean;
+  learningLabel?: boolean;
+}) {
   return (
     <>
       <span className="sr-only">{tileLabel(tile)}</span>
       {tile.state === "loose" ? (
         <LooseFace tile={tile} highContrast={highContrast} />
       ) : (
-        <CompletedFace tile={tile} />
+        <CompletedFace tile={tile} learningLabel={learningLabel} />
       )}
     </>
   );

@@ -45,30 +45,34 @@ into a pair (one cell).
 become dragon pungs the same way. Pungs are terminal; there are no upgrades
 beyond a pung, and no pair+pair or pung+anything merges.
 
-**Run** — 1‑2‑3 of a single suit. Three contiguous same‑suit loose tiles collapse
-into a run (any ordering of 1/2/3 is accepted once they’re adjacent). Completed
-sets never participate in runs.
+**Run (two‑stage)** — every combination in CRAK! is a **two‑tile collision**, so
+runs work exactly like pair→pung: slide `1`+`2` (or `2`+`3`) of one suit together
+to make a visible **PARTIAL RUN**, then add the missing number to complete the
+**RUN**. A lone `1` and `3` never combine (not adjacent). This replaced an older
+three‑tile adjacency scan that behaved unlike anything else in the game — see
+`docs/comprehension-audit.md` for the rationale.
 
-**Joker** — may substitute for exactly one missing loose tile to complete a pung,
-a dragon pung, or a run. A joker cannot combine with another joker, cannot form a
-pair, cannot fill more than one gap, and cannot upgrade a finished set. Jokers can
-be toggled in Settings (default on).
+**Joker** — completes a set that is one tile short: a pair → pung, a partial → run,
+a dragon pair → dragon pung. A joker never *starts* a set (no joker pairs, no joker
+partials), never combines with another joker, and never upgrades a finished set.
 
 ### Combination‑resolution order (important)
 
-For every valid swipe, each line (row/column) is resolved from the **leading
-edge** (where tiles pile up) toward the trailing edge:
+One universal rule: for every valid swipe, each line is resolved from the
+**leading edge** (where tiles pile up) toward the trailing edge, and each tile
+combines with the first neighbour it touches, at most once.
 
 1. Empty cells are removed (tiles compact toward the swipe direction).
-2. **Phase 1 — direct collisions:** pairs and pungs (including dragon pairs/pungs
-   and pair‑plus‑joker) are formed greedily from the leading edge. A set created
-   this move is **terminal** and does not chain further in the same move.
-3. **Phase 2 — runs:** three contiguous *loose* same‑suit tiles (1‑2‑3, with a
-   joker allowed to fill one gap) collapse into a run, again scanned from the
-   leading edge.
-4. Each source tile participates in **at most one** combination per move.
-5. Pairs/pungs take priority over runs on a direct collision; completed sets are
-   never eligible for runs.
+2. Two loose tiles collide: same rank → **pair**; adjacent ranks (same suit) →
+   **partial run**; matching dragons → **dragon pair**.
+3. A **pair** + matching tile (or joker) → **pung**; a **partial run** + the
+   missing rank (or joker) → **run**. These completed sets are terminal.
+4. A set created this move does **not** chain further in the same move.
+5. Completed sets never merge into runs.
+
+The single greedy collision pass is authoritative in `game/rules/combine.ts`.
+During learning hand 1 the run rule is switched off (`RuleOptions.runs`) so
+partial runs cannot appear before they are taught.
 
 After a valid move the engine, in order: resolves combinations → reconciles the
 target hand → **spawns one new tile unless the move made a combination** →
@@ -84,6 +88,33 @@ central balance lever (see *Balance & play-testing*).
 
 The engine lives in pure TypeScript under `game/` and is covered by tests
 (`tests/`). See `game/rules/combine.ts` for the authoritative resolution code.
+
+## Learning by play (first game)
+
+New players don't read rules — they start a **four‑hand learning game** that
+introduces one concept at a time, teaching through play rather than text:
+
+1. **Match tiles** — dots only. Make a pair, then a pung. Target: one pair + one
+   pung. The opening board places the first pair one swipe away; runs are off.
+2. **Build a run** — adds bams. Target adds a run (1+2 → partial, +3 → run).
+3. **Dragons** — adds dragons and a dragon‑set slot.
+4. **The Joker** — adds the wild, then unlocks endless mode.
+
+Progress is saved locally (`tutorialSeen`), so it never repeats automatically;
+**Settings → Replay learning game** restarts it. During learning, tiles show
+`PAIR`/`PUNG`/`RUN` labels and target slots lead with plain language
+(`TWO MATCHING TILES` above `Pair`). A simulation of 200 first games completes
+hand 1 **100%** of the time with **zero** game‑overs (first pair ~move 1, first
+Mahj median ~9 moves); see `tests/sim/learning.test.ts`.
+
+**Guided Play** (on by default, toggle in Settings): after ~2 s idle, the tiles
+that belong together get a subtle outline and a one‑line suggestion appears below
+the hand ("Match the two 2 Dots", "One more set for Mahj"). Hints are computed in
+`game/hints.ts` and are proven by test to only ever point at *legal* combinations.
+
+A visual **How sets work** panel (from the game and pause menu) shows the
+combinations as pictures: `[2 Dot]+[2 Dot]=[Pair]`, `[Pair]+[2 Dot]=[Pung]`,
+`[1 Bam]+[2 Bam]=[Run…]`, `[Run…]+[3 Bam]=[Run]`, `[Pair]+[Joker]=[Pung]`.
 
 ## Target hands
 
@@ -123,9 +154,21 @@ All constants live in `game/scoring.ts`:
 Pungs and runs are scored highest because they consume the most tiles and free
 the most space — the plays that actually sustain a run.
 
-## Tile spawning
+## Tile spawning (where new tiles come from)
 
-A **fair‑bag** generator (`game/generator.ts`): a balanced, shuffled bag
+Every new tile **enters from the edge opposite the swipe** — swipe left and it
+slides in from the right edge, swipe up and it drops from the bottom — landing in
+an empty cell on that edge (or the nearest legal cell inward). It appears **only
+after** the move and any combinations have finished animating, never in the same
+frame as a merge, with its own entrance slide, a brief "newest tile" ring, and a
+distinct soft sound. The three phases of a swipe — tiles move (~160 ms), sets
+combine (~180 ms), a new tile enters (~160 ms) — are kept visually separate and
+input is locked until the sequence finishes. A first‑time callout ("A new tile
+entered from the right") shows for the first few swipes. Entry geometry lives in
+`game/rules/movement.ts` (`entryLinesFor`/`entryEdgeFor`).
+
+Which tile appears is a **fair‑bag** generator (`game/generator.ts`): a balanced,
+shuffled bag
 (numbers common, dragons uncommon, joker rare) is drawn down and refilled, with
 target‑aware weighting toward the suits the current hand needs and a **dragon
 focus** (when a dragon set is required, one colour is emphasised so a dragon
