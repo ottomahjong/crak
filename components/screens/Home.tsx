@@ -5,14 +5,26 @@ import { Wordmark } from "@/components/ui/Wordmark";
 type Props = {
   best: number;
   hasSave: boolean;
+  tutorialSeen: boolean;
   onPlay: () => void;
   onContinue: () => void;
-  onTutorial: () => void;
+  onLearn: () => void;
   onStats: () => void;
   onSettings: () => void;
 };
 
-export function Home({ best, hasSave, onPlay, onContinue, onTutorial, onStats, onSettings }: Props) {
+export function Home({
+  best,
+  hasSave,
+  tutorialSeen,
+  onPlay,
+  onContinue,
+  onLearn,
+  onStats,
+  onSettings,
+}: Props) {
+  const isNew = !tutorialSeen;
+
   return (
     <div className="screen home">
       <div className="home__top">
@@ -22,18 +34,33 @@ export function Home({ best, hasSave, onPlay, onContinue, onTutorial, onStats, o
       </div>
 
       <div className="home__actions">
-        {hasSave && (
-          <button className="btn btn--primary btn--lg" onClick={onContinue}>
-            Continue
-          </button>
+        {isNew ? (
+          <>
+            {/* First-time players: learning is the primary call to action. */}
+            <button className="btn btn--primary btn--lg" onClick={onLearn}>
+              Learn to Play
+            </button>
+            <button className="btn btn--lg" onClick={onPlay}>
+              Skip — just play
+            </button>
+          </>
+        ) : (
+          <>
+            {hasSave && (
+              <button className="btn btn--primary btn--lg" onClick={onContinue}>
+                Continue
+              </button>
+            )}
+            <button className={`btn btn--lg ${hasSave ? "" : "btn--primary"}`} onClick={onPlay}>
+              {hasSave ? "New game" : "Play"}
+            </button>
+            <button className="btn btn--lg" onClick={onLearn}>
+              Learn to Play
+            </button>
+          </>
         )}
-        <button className={`btn btn--lg ${hasSave ? "" : "btn--primary"}`} onClick={onPlay}>
-          {hasSave ? "New game" : "Play"}
-        </button>
+
         <div className="home__minor">
-          <button className="btn btn--ghost" onClick={onTutorial}>
-            How to play
-          </button>
           <button className="btn btn--ghost" onClick={onStats}>
             Statistics
           </button>

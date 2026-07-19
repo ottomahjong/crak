@@ -36,6 +36,8 @@ export default function Page() {
     setScreen("game");
   };
   const play = () => {
+    // Mark onboarding acknowledged so "Skip — just play" doesn't nag later.
+    if (!g.settings.tutorialSeen) g.updateSettings({ tutorialSeen: true });
     g.startNewGame();
     setScreen("game");
   };
@@ -43,14 +45,6 @@ export default function Page() {
     g.continueGame();
     setScreen("game");
   };
-
-  // First run → straight into the four-hand learning game (teaches by playing).
-  useEffect(() => {
-    if (g.ready && !g.settings.tutorialSeen) {
-      startLearning();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [g.ready, g.settings.tutorialSeen]);
 
   if (!g.ready) {
     return <div className="screen boot" aria-busy="true" />;
@@ -62,9 +56,10 @@ export default function Page() {
         <Home
           best={g.stats.bestScore}
           hasSave={g.hasSave}
+          tutorialSeen={g.settings.tutorialSeen}
           onPlay={play}
           onContinue={cont}
-          onTutorial={startLearning}
+          onLearn={startLearning}
           onStats={() => {
             setReturnTo("home");
             setScreen("stats");
