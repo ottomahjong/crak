@@ -1,13 +1,19 @@
 /* CRAK! service worker — offline app shell.
  * Game progress lives in localStorage, independent of this cache, so updating
- * the cached assets never corrupts an active game. */
-const CACHE = "crak-cache-v1";
+ * the cached assets never corrupts an active game.
+ *
+ * Paths are resolved relative to the worker's own location so the same file
+ * works at the domain root or under a GitHub Pages subpath (/<repo>/). */
+const CACHE = "crak-cache-v2";
+// e.g. "/crak/" on GitHub Pages, "/" at the root.
+const BASE = new URL("./", self.location).pathname;
+const SHELL = BASE; // navigation fallback / app shell
 const PRECACHE = [
-  "/",
-  "/manifest.json",
-  "/icons/icon-192.png",
-  "/icons/icon-512.png",
-  "/icons/apple-touch-icon.png",
+  BASE,
+  BASE + "manifest.json",
+  BASE + "icons/icon-192.png",
+  BASE + "icons/icon-512.png",
+  BASE + "icons/apple-touch-icon.png",
 ];
 
 self.addEventListener("install", (event) => {
@@ -38,10 +44,10 @@ self.addEventListener("fetch", (event) => {
       fetch(req)
         .then((res) => {
           const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put("/", copy)).catch(() => {});
+          caches.open(CACHE).then((c) => c.put(SHELL, copy)).catch(() => {});
           return res;
         })
-        .catch(() => caches.match("/").then((r) => r || caches.match(req))),
+        .catch(() => caches.match(SHELL).then((r) => r || caches.match(req))),
     );
     return;
   }

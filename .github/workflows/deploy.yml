@@ -1,0 +1,61 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - claude/crak-mahjong-puzzle-u12cfh
+  workflow_dispatch:
+
+# Allow the workflow to publish to the github-pages environment.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deploy at a time; don't cancel an in-progress one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # The project site is served at https://<user>.github.io/crak/ .
+      # Change this (or set to empty) for a user/root site or a custom domain.
+      PAGES_BASE_PATH: /crak
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Guard the deploy: typecheck + tests must pass before we publish.
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      # underscore dirs (_next) must not be run through Jekyll.
+      - run: touch ./out/.nojekyll
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

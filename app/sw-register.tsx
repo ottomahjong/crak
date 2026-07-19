@@ -7,9 +7,11 @@ export function ServiceWorker() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!("serviceWorker" in navigator)) return;
-    // Register after load so it never competes with first paint.
+    // Register after load so it never competes with first paint. The base path
+    // matters on GitHub Pages, where the app is served under /<repo>/.
+    const bp = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
     const register = () => {
-      navigator.serviceWorker.register("/sw.js").catch(() => {
+      navigator.serviceWorker.register(`${bp}/sw.js`, { scope: `${bp}/` }).catch(() => {
         /* offline support is best-effort */
       });
     };

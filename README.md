@@ -212,29 +212,43 @@ node scripts/gen-icons.mjs   # regenerate public/icons/*
 
 ## Production build
 
+The app is a fully **static export** (`output: "export"`) — `next build` writes
+the whole site to `out/`, no server or environment variables required.
+
 ```bash
-npm run build
-npm start            # serve the production build locally
+npm run build                 # → out/
+npx serve out                 # preview (any static file server works)
 ```
 
-## Deploy to Vercel
+## Deploy to GitHub Pages
 
-The app needs **no environment variables** and **no backend**.
+Deployment is automated by `.github/workflows/deploy.yml`.
 
-1. Push this repository to GitHub.
-2. In Vercel, **New Project → Import** the repo.
-3. Framework preset: **Next.js** (auto‑detected). Build command `next build`,
-   output handled automatically. No env vars required.
-4. Deploy. That’s it.
+1. In the repo, **Settings → Pages → Build and deployment → Source: GitHub
+   Actions** (one‑time).
+2. Push to the deploy branch (or merge to your default branch). The workflow
+   type‑checks, runs the tests, builds the static export, and publishes it.
+3. The site goes live at `https://<user>.github.io/crak/`.
 
-Alternatively, from the repo root: `npx vercel` (or `npx vercel --prod`).
+**Subpath / base path.** A GitHub *project* site is served under `/<repo>/`, so
+the build sets `basePath` from `PAGES_BASE_PATH` (default `/crak`, the repo
+name). All asset, service‑worker, manifest and icon URLs are prefixed
+accordingly. If you deploy to a **user/root site** or a **custom domain** (served
+at `/`), set `PAGES_BASE_PATH` to an empty string in the workflow (and rename the
+default in `next.config.mjs`). If your repo isn't named `crak`, change
+`PAGES_BASE_PATH` to `/<your-repo>`.
+
+> Note: the `github-pages` environment may restrict which branches can deploy. If
+> the deploy step is blocked, either merge to your default branch or allow the
+> branch under **Settings → Environments → github-pages → Deployment branches**.
 
 ## Install on iPhone (PWA)
 
-1. Open the deployed URL in **Safari** on iPhone.
+1. Open the deployed URL (e.g. `https://<user>.github.io/crak/`) in **Safari**.
 2. Tap the **Share** button → **Add to Home Screen** → **Add**.
 3. Launch “CRAK!” from the home screen — it runs standalone, in portrait, with
-   safe‑area spacing, and works offline after the first load.
+   safe‑area spacing, and works offline after the first load. The service worker
+   is scoped to the subpath, so offline caching works under `/crak/` too.
 
 ## Storage architecture
 

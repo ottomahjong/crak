@@ -14,12 +14,16 @@ const googleSans = Poppins({
   display: "swap",
 });
 
+// Static-export asset base (GitHub Pages subpath). App-router metadata does not
+// auto-prefix basePath onto manifest/icon hrefs, so we do it explicitly.
+const BP = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+
 export const metadata: Metadata = {
   applicationName: "CRAK!",
   title: "CRAK! — A tiny mahjong puzzle",
   description:
     "Swipe the board, combine mahjong-inspired tiles into pairs, pungs and runs, and complete a small target hand. A calm, tactile, offline-friendly puzzle.",
-  manifest: "/manifest.json",
+  manifest: `${BP}/manifest.json`,
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
@@ -27,10 +31,10 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
-      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
-      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+      { url: `${BP}/icons/icon-192.png`, sizes: "192x192", type: "image/png" },
+      { url: `${BP}/icons/icon-512.png`, sizes: "512x512", type: "image/png" },
     ],
-    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180" }],
+    apple: [{ url: `${BP}/icons/apple-touch-icon.png`, sizes: "180x180" }],
   },
   formatDetection: { telephone: false },
 };
