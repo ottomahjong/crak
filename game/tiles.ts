@@ -76,6 +76,8 @@ export const isLooseDragon = (t: Tile) =>
 
 export const isPair = (t: Tile) => t.state === "completed" && t.setKind === "pair";
 export const isPung = (t: Tile) => t.state === "completed" && t.setKind === "pung";
+export const isKong = (t: Tile) => t.state === "completed" && t.setKind === "kong";
+export const isQuint = (t: Tile) => t.state === "completed" && t.setKind === "quint";
 export const isRun = (t: Tile) => t.state === "completed" && t.setKind === "run";
 export const isPartialRun = (t: Tile) =>
   t.state === "completed" && t.setKind === "partial";
@@ -87,9 +89,17 @@ export function missingRank(t: Tile): 1 | 2 | 3 | null {
   return null;
 }
 export const isDragonSet = (t: Tile) =>
-  t.state === "completed" && !!t.dragon && (t.setKind === "pair" || t.setKind === "pung");
+  t.state === "completed" &&
+  !!t.dragon &&
+  (t.setKind === "pair" || t.setKind === "pung" || t.setKind === "kong" || t.setKind === "quint");
 export const isNumberSet = (t: Tile) =>
-  t.state === "completed" && !!t.suit && (t.setKind === "pair" || t.setKind === "pung" || t.setKind === "run");
+  t.state === "completed" &&
+  !!t.suit &&
+  (t.setKind === "pair" ||
+    t.setKind === "pung" ||
+    t.setKind === "kong" ||
+    t.setKind === "quint" ||
+    t.setKind === "run");
 
 // ---------------------------------------------------------------------------
 // Completed-set constructors
@@ -109,6 +119,22 @@ export function makePung(
   id = newTileId("pung"),
 ): Tile {
   return { id, state: "completed", setKind: "pung", usedJoker, ...identity };
+}
+
+export function makeKong(
+  identity: { suit: Suit; rank: Rank } | { dragon: DragonColor },
+  usedJoker = false,
+  id = newTileId("kong"),
+): Tile {
+  return { id, state: "completed", setKind: "kong", usedJoker, ...identity };
+}
+
+export function makeQuint(
+  identity: { suit: Suit; rank: Rank } | { dragon: DragonColor },
+  usedJoker = false,
+  id = newTileId("quint"),
+): Tile {
+  return { id, state: "completed", setKind: "quint", usedJoker, ...identity };
 }
 
 export function makeRun(suit: Suit, usedJoker = false, id = newTileId("run")): Tile {
@@ -144,7 +170,14 @@ export function tileLabel(tile: Tile): string {
   if (tile.setKind === "partial" && tile.suit && tile.partRanks) {
     return `${SUIT_LABEL[tile.suit]} ${tile.partRanks[0]}-${tile.partRanks[1]}, needs ${missingRank(tile)}`;
   }
-  const kind = tile.setKind === "pair" ? "Pair" : tile.setKind === "pung" ? "Pung" : "Run";
+  const KIND_WORD: Record<string, string> = {
+    pair: "Pair",
+    pung: "Pung",
+    kong: "Kong",
+    quint: "Quint",
+    run: "Run",
+  };
+  const kind = KIND_WORD[tile.setKind ?? ""] ?? "Run";
   if (tile.setKind === "run" && tile.suit) return `${SUIT_LABEL[tile.suit]} Run`;
   if (tile.dragon) return `${DRAGON_LABEL[tile.dragon]} ${kind}`;
   if (tile.suit && tile.rank) return `${SUIT_LABEL[tile.suit]} ${tile.rank} ${kind}`;
@@ -155,6 +188,8 @@ export function tileLabel(tile: Tile): string {
 export function setKindLabel(tile: Tile): string {
   if (tile.setKind === "pair") return "PAIR";
   if (tile.setKind === "pung") return "PUNG";
+  if (tile.setKind === "kong") return "KONG";
+  if (tile.setKind === "quint") return "QUINT";
   if (tile.setKind === "run") return "RUN";
   if (tile.setKind === "partial" && tile.partRanks)
     return `${tile.partRanks[0]}·${tile.partRanks[1]}`;

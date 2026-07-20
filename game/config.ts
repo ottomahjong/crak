@@ -21,23 +21,21 @@ export const CONFIG = {
   /** Delay before an idle Guided-Play hint appears (ms). */
   HINT_DELAY_MS: 1800,
 
-  /** Spawn cadence: a new tile appears after this many *non-combining* valid
-   *  swipes (combining moves never spawn — they already earn breathing room).
-   *  Beginner (learning) mode is more forgiving. Chosen by simulation. */
-  SPAWN_EVERY_MOVES: 2,
-  SPAWN_EVERY_MOVES_BEGINNER: 3,
+  /** Spawn model: exactly ONE new tile enters after every VALID swipe (a swipe
+   *  that moved a tile, combined tiles, or advanced a partial set). Swipes that
+   *  change nothing never spawn. Combining a swipe nets zero tiles (it removes
+   *  what it fuses, then one enters), so skilled play keeps the board flowing. */
+  SPAWN_PER_VALID_SWIPE: true,
 
-  /** How many tiles the board starts with (leaves lots of empty space so the
-   *  player can correct placement mistakes). */
+  /** How many tiles the board starts with. Kept low because every swipe now
+   *  adds a tile, so the board fills from play rather than from the initial deal. */
   INITIAL_TILES: 3,
   INITIAL_TILES_BEGINNER: 3,
+
+  /** Endless round at which advanced play unlocks: Kongs & Quints become
+   *  combinable and Kong/Quint target hands may be dealt. */
+  ADVANCED_ROUND: 7,
 
   /** Free undos per game (precise placement → accidental swipes are cheap). */
   UNDO_COUNT: 3,
 } as const;
-
-export type MoveMode = "normal" | "beginner";
-
-export function spawnEvery(mode: MoveMode): number {
-  return mode === "beginner" ? CONFIG.SPAWN_EVERY_MOVES_BEGINNER : CONFIG.SPAWN_EVERY_MOVES;
-}

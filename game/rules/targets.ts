@@ -1,5 +1,10 @@
 import type { Board, TargetPattern, TargetRequirement, Tile } from "@/types";
-import { isDragonSet, isPair, isPung, isRun } from "@/game/tiles";
+import { isDragonSet, isKong, isPair, isPung, isQuint, isRun } from "@/game/tiles";
+
+/** A pung, kong or quint — three-or-more of a kind. */
+const isPungOrBigger = (t: Tile) => isPung(t) || isKong(t) || isQuint(t);
+/** Any completed "set" that fills a generic set slot: pung/kong/quint or run. */
+const isAnySet = (t: Tile) => isPungOrBigger(t) || isRun(t);
 
 // ---------------------------------------------------------------------------
 // Target matching
@@ -12,17 +17,21 @@ export function matchesRequirement(req: TargetRequirement, tile: Tile): boolean 
     case "any-pair":
       return isPair(tile);
     case "number-pung":
-      return isPung(tile) && !!tile.suit;
+      return isPungOrBigger(tile) && !!tile.suit;
+    case "number-kong":
+      return (isKong(tile) || isQuint(tile)) && !!tile.suit;
+    case "number-quint":
+      return isQuint(tile) && !!tile.suit;
     case "suited-run":
       return isRun(tile);
     case "dragon-set":
       return isDragonSet(tile);
     case "suit-set":
-      return (isPung(tile) || isRun(tile)) && tile.suit === req.suit;
+      return (isPungOrBigger(tile) || isRun(tile)) && tile.suit === req.suit;
     case "suit-run":
       return isRun(tile) && tile.suit === req.suit;
     case "any-set":
-      return isPung(tile) || isRun(tile);
+      return isAnySet(tile);
     default:
       return false;
   }
@@ -31,6 +40,10 @@ export function matchesRequirement(req: TargetRequirement, tile: Tile): boolean 
 /** Higher = more specific; specific slots are filled first. */
 function specificity(req: TargetRequirement): number {
   switch (req.kind) {
+    case "number-quint":
+      return 7;
+    case "number-kong":
+      return 6;
     case "suit-run":
       return 5;
     case "suit-set":

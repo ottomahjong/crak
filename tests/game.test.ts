@@ -38,21 +38,21 @@ describe("initial state", () => {
 });
 
 describe("move", () => {
-  it("spawns every N non-combining slides (cadence), not on a combining move", () => {
-    // Non-combining slides accumulate; a spawn lands on the 2nd (normal cadence).
+  it("spawns exactly one tile on every valid swipe — including combining moves", () => {
+    // Every valid slide adds one tile.
     let s = freshState();
     const b1 = emptyBoard();
     b1[3] = mkLoose("dot-1"); // will step left one cell each swipe
-    s = { ...s, board: b1, movesSinceSpawn: 0 };
+    s = { ...s, board: b1 };
     const m1 = move(s, "left");
     expect(m1.changed).toBe(true);
     expect(m1.events).toHaveLength(0);
-    expect(m1.spawnedTile).toBeNull(); // first slide: no spawn yet
+    expect(m1.spawnedTile).not.toBeNull(); // first slide already spawns
     const m2 = move(m1.state, "left");
     expect(m2.changed).toBe(true);
-    expect(m2.spawnedTile).not.toBeNull(); // second slide: spawns
+    expect(m2.spawnedTile).not.toBeNull(); // and every slide after
 
-    // A combining move never spawns (breathing room).
+    // A combining move also spawns (it netted a tile away by fusing two).
     let combo = freshState();
     const b2 = emptyBoard();
     b2[0] = mkLoose("dot-1");
@@ -61,7 +61,7 @@ describe("move", () => {
     const merged = move(combo, "left");
     expect(merged.changed).toBe(true);
     expect(merged.events.length).toBeGreaterThan(0);
-    expect(merged.spawnedTile).toBeNull();
+    expect(merged.spawnedTile).not.toBeNull();
   });
 
   it("ignores invalid moves without spawning", () => {

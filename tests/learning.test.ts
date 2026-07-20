@@ -30,11 +30,11 @@ describe("edge spawning", () => {
   });
 
   it("a spawning swipe enters from the opposite edge", () => {
-    // Learning hand 2 (dots+bams); craft a pure slide, drive past the cadence.
+    // Learning hand 2 (dots+bams); craft a pure slide. Every valid swipe spawns.
     let s = createInitialState(42, 2);
     const board = new Array(16).fill(null);
     board[3] = { id: "a", state: "loose", suit: "dot", rank: 1 }; // steps left
-    s = { ...s, board, movesSinceSpawn: 99 }; // force a spawn on the next slide
+    s = { ...s, board };
     const out = move(s, "left");
     expect(out.changed).toBe(true);
     expect(out.spawnedTile).not.toBeNull();
@@ -44,7 +44,7 @@ describe("edge spawning", () => {
     expect([3, 7, 11, 15]).toContain(idx);
   });
 
-  it("spawn is skipped on a combining move (no overlap with a merge)", () => {
+  it("a combining move also spawns exactly one tile", () => {
     let s = createInitialState(7, 1);
     const board = new Array(16).fill(null);
     board[0] = { id: "a", state: "loose", suit: "dot", rank: 1 };
@@ -52,8 +52,8 @@ describe("edge spawning", () => {
     s = { ...s, board };
     const out = move(s, "left");
     expect(out.events.length).toBeGreaterThan(0);
-    expect(out.spawnedTile).toBeNull();
-    expect(out.spawnEntry).toBeNull();
+    expect(out.spawnedTile).not.toBeNull();
+    expect(out.spawnEntry).toBe("right");
   });
 });
 

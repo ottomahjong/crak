@@ -1,15 +1,19 @@
 import type { CombineEvent, DragonColor, Rank, Suit, Tile } from "@/types";
 import {
   isJoker,
+  isKong,
   isLooseDragon,
   isLooseNumber,
   isPair,
   isPartialRun,
   isPung,
+  isQuint,
   isRun,
+  makeKong,
   makePair,
   makePartialRun,
   makePung,
+  makeQuint,
   makeRun,
   missingRank,
 } from "@/game/tiles";
@@ -33,9 +37,14 @@ import {
 //   loose 2      + loose 3 (same suit)→ PARTIAL RUN 2·3
 //   PARTIAL RUN  + missing rank (/Joker) → RUN             (terminal)
 //
+// On ADVANCED levels (opts.kongs) the pung line extends two more steps:
+//   PUNG of X    + loose X (or Joker) → KONG of X   (four of a kind)
+//   KONG of X    + loose X (or Joker) → QUINT of X  (five of a kind, terminal)
+// Dragons kong/quint the same way. When opts.kongs is off, a pung is terminal.
+//
 // Nothing else combines. In particular: 1+3 never combine (not adjacent),
 // jokers never start a set (no joker pairs, no joker partials, no
-// joker+joker), pungs/runs are terminal, and completed sets never join runs.
+// joker+joker), runs/quints are terminal, and completed sets never join runs.
 //
 // The two-stage run replaced an earlier three-tile adjacency scan: runs now
 // follow the exact same physics as pair→pung, which is the point.
@@ -43,6 +52,8 @@ import {
 export type RuleOptions = {
   /** When false, partial-run and run merges are disabled (learning hand 1). */
   runs?: boolean;
+  /** When true, pungs may extend to kongs (4) and quints (5) — advanced levels. */
+  kongs?: boolean;
 };
 
 type MergeSpec = {
@@ -61,9 +72,50 @@ function numberIdentity(t: Tile): { suit: Suit; rank: Rank } | null {
  */
 function tryMerge2(a: Tile, b: Tile, opts: RuleOptions): MergeSpec | null {
   const runsEnabled = opts.runs !== false;
+  const kongsEnabled = opts.kongs === true;
 
-  // Terminal sets never merge further.
-  if (isPung(a) || isPung(b) || isRun(a) || isRun(b)) return null;
+  // Runs and quints are always terminal.
+  if (isRun(a) || isRun(b) || isQuint(a) || isQuint(b)) return null;
+
+  // Pung/Kong extension (advanced): pung + match → kong, kong + match → quint.
+  const extendable = isPung(a) || isKong(a) ? a : isPung(b) || isKong(b) ? b : null;
+  if (isPung(a) || isPung(b) || isKong(a) || isKong(b)) {
+    if (!kongsEnabled || !extendable) return null;
+    const other = extendable === a ? b : a;
+    const toKong = isPung(extendable);
+    // Number set: matching loose number (or joker) extends it.
+    if (extendable.suit && extendable.rank) {
+      const matches =
+        (isLooseNumber(other) &&
+          other.suit === extendable.suit &&
+          other.rank === extendable.rank) ||
+        isJoker(other);
+      if (matches) {
+        const suit = extendable.suit;
+        const rank = extendable.rank;
+        const wild = isJoker(other) || !!extendable.usedJoker;
+        return {
+          make: (id) => (toKong ? makeKong({ suit, rank }, wild, id) : makeQuint({ suit, rank }, wild, id)),
+          event: toKong ? "kong" : "quint",
+          usedJoker: wild,
+        };
+      }
+    }
+    // Dragon set: matching dragon (or joker) extends it.
+    if (extendable.dragon) {
+      const matches = (isLooseDragon(other) && other.dragon === extendable.dragon) || isJoker(other);
+      if (matches) {
+        const dragon = extendable.dragon;
+        const wild = isJoker(other) || !!extendable.usedJoker;
+        return {
+          make: (id) => (toKong ? makeKong({ dragon }, wild, id) : makeQuint({ dragon }, wild, id)),
+          event: toKong ? "dragon-kong" : "quint",
+          usedJoker: wild,
+        };
+      }
+    }
+    return null;
+  }
 
   const na = numberIdentity(a);
   const nb = numberIdentity(b);

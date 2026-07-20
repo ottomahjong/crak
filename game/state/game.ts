@@ -12,7 +12,6 @@ import type {
 } from "@/types";
 import { CELL_COUNT } from "@/types";
 import { applyMove, entryLinesFor, hasAnyMove } from "@/game/rules/movement";
-import type { RuleOptions } from "@/game/rules/combine";
 import { reconcileTargets } from "@/game/rules/targets";
 import { scoreForEvents, handCompletionScore, SCORING } from "@/game/scoring";
 import {
@@ -21,6 +20,8 @@ import {
   pickEmptyCell,
   helpfulSpawn,
   REINFORCE_P,
+  REINFORCE_P_MAX,
+  REINFORCE_P_CONGESTION,
   JOKER_SPAWN_P,
 } from "@/game/generator";
 import { nextRandom, randomSeed } from "@/lib/rng";
@@ -31,39 +32,18 @@ import {
   OPENING_PATTERN_ID,
 } from "@/data/targets";
 import { makeLooseFromType } from "@/game/tiles";
-import { CONFIG, spawnEvery } from "@/game/config";
+import { CONFIG } from "@/game/config";
+import { learningPool, ruleOptsFor, advancedUnlocked } from "@/game/rules/options";
+import { evaluateHandSolvability, steerTypeForTarget } from "@/game/solvability";
+
+// Re-exported so existing imports (tests, UI) keep working from one place.
+export { learningPool, ruleOptsFor, advancedUnlocked };
+
 /** Minimum tiles the board must hold after a hand cashes in, to stay playable. */
 const MIN_TILES_AFTER_HAND = 4;
 
-// ---------------------------------------------------------------------------
-// Learning game (four hands, one concept at a time)
-// ---------------------------------------------------------------------------
-
-const DOTS: TileTypeId[] = ["dot-1", "dot-2", "dot-3"];
-const BAMS: TileTypeId[] = ["bam-1", "bam-2", "bam-3"];
-const DRAGONS: TileTypeId[] = ["dragon-red", "dragon-green", "dragon-white"];
-
-/** Tile families available per learning hand. undefined = full pool (endless). */
-export function learningPool(stage: LearningStage | undefined): Set<TileTypeId> | undefined {
-  switch (stage) {
-    case 1:
-      return new Set(DOTS);
-    case 2:
-      return new Set([...DOTS, ...BAMS]);
-    case 3:
-      return new Set([...DOTS, ...BAMS, ...DRAGONS]);
-    case 4:
-      return new Set([...DOTS, ...BAMS, ...DRAGONS, "joker"]);
-    default:
-      return undefined;
-  }
-}
-
-/** Rules active for a state: hand 1 has runs disabled so partials cannot
- * appear before they are taught. */
-export function ruleOptsFor(state: Pick<GameState, "learning">): RuleOptions {
-  return { runs: state.learning !== 1 };
-}
+/** Below this solvability confidence, a spawn is steered toward a needed tile. */
+const STEER_CONFIDENCE = 0.5;
 
 // ---------------------------------------------------------------------------
 // Snapshot helpers (used for undo)
@@ -163,10 +143,29 @@ function spawnOne(
   recentSpawns: GameState["recentSpawns"],
   direction?: Direction,
   allowed?: ReadonlySet<TileTypeId>,
+  forcedType?: TileTypeId | null,
 ): SpawnOutcome {
   const empties = emptyCells(board);
   if (empties.length === 0) {
     return { board, bag, rngState, recentSpawns, spawnedCell: null, spawnedTile: null };
+  }
+
+  // Solvability steering: when a required tile is starving, the caller forces
+  // its type so a hand never dies of bad luck. Placed straight away, bypassing
+  // the joker roll / reinforcement / bag draw.
+  if (forcedType && (!allowed || allowed.has(forcedType))) {
+    const placedF = pickSpawnCell(board, direction, rngState);
+    const fTile = makeLooseFromType(forcedType);
+    const fb = board.slice();
+    fb[placedF.cell] = fTile;
+    return {
+      board: fb,
+      bag,
+      rngState: placedF.rngState,
+      recentSpawns: [...recentSpawns, forcedType].slice(-8),
+      spawnedCell: placedF.cell,
+      spawnedTile: fTile,
+    };
   }
 
   let rs = rngState;
@@ -198,11 +197,17 @@ function spawnOne(
 
   // Roll for a reinforcement spawn (a tile that combines with the board) vs a
   // fair-bag draw. Reinforcement keeps the board from choking on random junk.
+  // Because every swipe now spawns, a congested board needs combinable tiles
+  // urgently — so the reinforcement chance rises with board fullness (empty
+  // cells falling), giving the player the pieces to combine the board back down.
   const roll = nextRandom(rs);
   rs = roll.state;
 
+  const fullness = 1 - empties.length / CELL_COUNT; // 0 empty-ish … 1 nearly full
+  const reinforceP = Math.min(REINFORCE_P_MAX, REINFORCE_P + fullness * REINFORCE_P_CONGESTION);
+
   let reinforced: TileTypeId | null = null;
-  if (roll.value < REINFORCE_P) {
+  if (roll.value < reinforceP) {
     // Fairness: once a tile has been spawned twice in a row, tell reinforcement
     // to pick a *different* helpful tile rather than flooding one type.
     const last = recentSpawns[recentSpawns.length - 1];
@@ -372,16 +377,15 @@ export function move(state: GameState, direction: Direction): MoveOutcome {
   }
   const setsCreated = state.setsCreated + raw.events.length;
 
-  // Reconcile targets against the post-move board.
+  // Reconcile targets against the post-move board (update target progress).
   const reconciled = reconcileTargets(state.target, raw.board);
   scoreDelta += reconciled.newlyFilled.length * SCORING.targetSlot;
 
-  // Spawn cadence under ONE-STEP movement. Combining moves never spawn (they
-  // already earn breathing room). Non-combining valid moves accumulate toward a
-  // spawn every N moves (N larger in beginner mode), so the slower one-cell
-  // shuffling that lines tiles up doesn't flood the board.
-  const combined = raw.events.length > 0;
-  const noSpawn = {
+  // Spawn model: EVERY valid swipe (this branch only runs when raw.changed) adds
+  // exactly one new tile. A combining swipe removed what it fused, so the fresh
+  // tile nets the board back — skilled play keeps it flowing; idle shuffling
+  // fills it. The hand is never spawned onto once complete.
+  let spawn = {
     board: reconciled.board,
     bag: state.bag,
     rngState: state.rngState,
@@ -390,23 +394,26 @@ export function move(state: GameState, direction: Direction): MoveOutcome {
     spawnedTile: null as Tile | null,
   };
 
-  let movesSinceSpawn = state.movesSinceSpawn;
-  let spawn = noSpawn;
-  if (!combined) {
-    movesSinceSpawn += 1;
-    const cadence = spawnEvery(state.learning ? "beginner" : "normal");
-    if (movesSinceSpawn >= cadence) {
-      spawn = spawnOne(
-        reconciled.board,
-        reconciled.target,
-        state.bag,
-        state.rngState,
-        state.recentSpawns,
-        direction,
-        learningPool(state.learning),
-      );
-      if (spawn.spawnedTile) movesSinceSpawn = 0;
-    }
+  if (!reconciled.complete) {
+    // Recalculate achievability and, if a required tile is starving, steer the
+    // spawn to supply it — the fairness guarantee that a hand stays winnable.
+    const projectedState = { ...state, board: reconciled.board, target: reconciled.target };
+    const solvability = evaluateHandSolvability(projectedState, reconciled.target, state.bag);
+    const steer =
+      solvability.confidence < STEER_CONFIDENCE
+        ? steerTypeForTarget(projectedState, reconciled.target)
+        : null;
+
+    spawn = spawnOne(
+      reconciled.board,
+      reconciled.target,
+      state.bag,
+      state.rngState,
+      state.recentSpawns,
+      direction,
+      learningPool(state.learning),
+      steer,
+    );
   }
 
   const handCompleted = reconciled.complete;
@@ -426,7 +433,7 @@ export function move(state: GameState, direction: Direction): MoveOutcome {
     bag: spawn.bag,
     rngState: spawn.rngState,
     recentSpawns: spawn.recentSpawns,
-    movesSinceSpawn,
+    movesSinceSpawn: 0, // vestigial: every valid swipe now spawns
     setsCreated,
     suitCounts,
     status: handCompleted ? "won-hand" : gameOver ? "game-over" : "playing",
@@ -534,7 +541,20 @@ export function completeHand(state: GameState): HandCompletionResult {
       learningAdvance = { completedStage, nextStage: null };
     }
   } else {
-    const picked = pickPatternForRound(nextRound, state.target.id, state.rngState);
+    // Fairness gate: verify the candidate hand is achievable from the cashed
+    // board + supply before presenting it; re-roll a few times if not.
+    let picked = pickPatternForRound(nextRound, state.target.id, state.rngState);
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const probe = reconcileTargets(picked.pattern, board);
+      const probeState: GameState = {
+        ...state,
+        board: probe.board,
+        round: nextRound,
+        learning: undefined,
+      };
+      if (evaluateHandSolvability(probeState, probe.target, state.bag).solvable) break;
+      picked = pickPatternForRound(nextRound, picked.pattern.id, picked.rngState);
+    }
     pattern = picked.pattern;
     rngAfterPick = picked.rngState;
   }

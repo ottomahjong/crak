@@ -179,7 +179,17 @@ export function buildBag(
  * actually assemble a four-set hand. The remaining fraction stays fair-bag
  * random to preserve variety and tension.
  */
-export const REINFORCE_P = 0.66;
+export const REINFORCE_P = 0.7;
+
+/**
+ * Under the spawn-every-swipe model the board fills from play, so the fuller it
+ * is the more the next spawn should be something the player can immediately
+ * combine (draining the board) rather than fresh clutter. The effective
+ * reinforcement chance is REINFORCE_P + fullness·REINFORCE_P_CONGESTION, capped
+ * at REINFORCE_P_MAX — a near-full board reinforces almost every time.
+ */
+export const REINFORCE_P_CONGESTION = 0.28;
+export const REINFORCE_P_MAX = 0.95;
 
 /**
  * Flat per-spawn chance of a Joker, on top of the (rare) bag joker. Tuned so a

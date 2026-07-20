@@ -7,6 +7,7 @@ import type {
 } from "@/types";
 import { newTileId } from "@/game/tiles";
 import { nextRandom } from "@/lib/rng";
+import { CONFIG } from "@/game/config";
 
 // ---------------------------------------------------------------------------
 // Target pattern library
@@ -30,6 +31,8 @@ function req(
 export const PLAIN_LABEL: Record<TargetRequirementKind, string> = {
   "any-pair": "TWO MATCHING TILES",
   "number-pung": "THREE MATCHING TILES",
+  "number-kong": "FOUR MATCHING TILES",
+  "number-quint": "FIVE MATCHING TILES",
   "suited-run": "1 + 2 + 3, SAME SUIT",
   "dragon-set": "MATCHING DRAGONS",
   "suit-set": "A SET OF ONE SUIT",
@@ -44,6 +47,10 @@ export function explainRequirement(r: Pick<TargetRequirement, "kind" | "suit">):
       return "Slide two identical tiles together — they fuse into a Pair.";
     case "number-pung":
       return "A Pair plus one more matching tile makes a Pung (three of a kind).";
+    case "number-kong":
+      return "Extend a Pung with a fourth matching tile to make a Kong.";
+    case "number-quint":
+      return "Extend a Kong with a fifth matching tile to make a Quint.";
     case "suited-run":
       return "Join 1+2 (or 2+3) of one suit, then add the missing number: a Run.";
     case "dragon-set":
@@ -60,7 +67,8 @@ export function explainRequirement(r: Pick<TargetRequirement, "kind" | "suit">):
 type PatternTemplate = {
   id: string;
   name: string;
-  difficulty: 1 | 2 | 3;
+  /** 1 easy … 3 hard … 4 advanced (Kongs & Quints). */
+  difficulty: 1 | 2 | 3 | 4;
   requirements: Omit<TargetRequirement, "id">[];
 };
 
@@ -167,6 +175,51 @@ export const PATTERN_TEMPLATES: PatternTemplate[] = [
       req("dragon-set", "DRAGON SET"),
     ],
   },
+  // --- Tier 4: advanced (Kongs & Quints) -----------------------------------
+  {
+    id: "KONGCALL",
+    name: "Kong's Call",
+    difficulty: 4,
+    requirements: [
+      req("any-pair", "ANY PAIR"),
+      req("any-pair", "ANY PAIR"),
+      req("number-pung", "NUMBER PUNG"),
+      req("number-kong", "NUMBER KONG"),
+    ],
+  },
+  {
+    id: "TWINKONGS",
+    name: "Twin Kongs",
+    difficulty: 4,
+    requirements: [
+      req("any-pair", "ANY PAIR"),
+      req("number-pung", "NUMBER PUNG"),
+      req("number-kong", "NUMBER KONG"),
+      req("number-kong", "NUMBER KONG"),
+    ],
+  },
+  {
+    id: "QUINT",
+    name: "The Quint",
+    difficulty: 4,
+    requirements: [
+      req("any-pair", "ANY PAIR"),
+      req("any-pair", "ANY PAIR"),
+      req("number-pung", "NUMBER PUNG"),
+      req("number-quint", "NUMBER QUINT"),
+    ],
+  },
+  {
+    id: "DRAGONKONG",
+    name: "Dragon Kong",
+    difficulty: 4,
+    requirements: [
+      req("any-pair", "ANY PAIR"),
+      req("number-pung", "NUMBER PUNG"),
+      req("number-kong", "NUMBER KONG"),
+      req("dragon-set", "DRAGON SET"),
+    ],
+  },
 ];
 
 export const OPENING_PATTERN_ID = "OPEN";
@@ -240,11 +293,14 @@ export function instantiatePattern(templateId: string): TargetPattern {
  * for pungs, dragon sets or runs — this is what turns a run from "one hand then
  * dead" into a genuine progression.
  *
- *   rounds 1–2   → easy only
- *   rounds 3–4   → easy / medium
- *   rounds 5–6   → easy / medium, with an occasional hard hand
- *   round 7+     → anything
+ *   rounds 1–2         → easy only
+ *   rounds 3–4         → easy / medium
+ *   rounds 5–6         → easy / medium, with an occasional hard hand
+ *   rounds 7 … ADV-1   → up to hard (runs, three suits)
+ *   ADVANCED_ROUND+    → anything, including Kong/Quint hands
  *
+ * Advanced (Kong/Quint) hands are only dealt once kongs are enabled at
+ * ADVANCED_ROUND, so a kong-requiring hand is never impossible to build.
  * Never repeats the immediately-previous pattern when an alternative exists.
  */
 export function pickPatternForRound(
@@ -255,7 +311,8 @@ export function pickPatternForRound(
   let maxDiff: number;
   if (round <= 2) maxDiff = 1;
   else if (round <= 6) maxDiff = 2;
-  else maxDiff = 3;
+  else if (round < CONFIG.ADVANCED_ROUND) maxDiff = 3;
+  else maxDiff = 4;
 
   // On rounds 5–6, allow an occasional hard hand to keep late runs tense.
   const r0 = nextRandom(rngState);

@@ -67,13 +67,76 @@ function Mini({ tile }: { tile: Tile }) {
 const RIBBON: Record<string, string> = {
   pair: "PAIR",
   pung: "PUNG",
+  kong: "KONG",
+  quint: "QUINT",
   run: "RUN",
   partial: "RUN…",
 };
 
-function CompletedFace({ tile, learningLabel }: { tile: Tile; learningLabel?: boolean }) {
+// How many glyph pips a completed set shows.
+const SET_COUNT: Record<string, number> = {
+  pair: 2,
+  pung: 3,
+  kong: 4,
+  quint: 5,
+  run: 3,
+};
+
+function CompletedFace({
+  tile,
+  learningLabel,
+  compact,
+}: {
+  tile: Tile;
+  learningLabel?: boolean;
+  compact?: boolean;
+}) {
   const accent = accentFor(tile);
   const kind = tile.setKind!;
+  const label = learningLabel ? RIBBON[kind] ?? kind.toUpperCase() : kind.toUpperCase();
+
+  // Compact rendering (rules modal / small reference tiles): everything is
+  // laid out in-flow so the label can never overlap the numerals. Sizes are
+  // fixed-px so they stay legible at ~52-60px tiles.
+  if (compact) {
+    return (
+      <div
+        className="flex h-full w-full flex-col items-center justify-center"
+        style={{ color: accent, gap: "1px", lineHeight: 1 }}
+      >
+        <span className="composite-ribbon composite-ribbon--flow">{label}</span>
+        {kind === "partial" && tile.partRanks ? (
+          <div className="flex items-end font-display font-bold" style={{ fontSize: "16px", gap: "2px" }}>
+            <span>{tile.partRanks[0]}</span>
+            <span>{tile.partRanks[1]}</span>
+            <span className="partial-need" style={{ fontSize: "12px" }}>
+              +{tile.partRanks.includes(1) ? (tile.partRanks.includes(2) ? 3 : 2) : 1}
+            </span>
+          </div>
+        ) : kind === "run" ? (
+          <div className="flex items-end font-display font-bold" style={{ fontSize: "16px", gap: "2px" }}>
+            <span>1</span>
+            <span style={{ opacity: 0.7 }}>2</span>
+            <span style={{ opacity: 0.5 }}>3</span>
+          </div>
+        ) : (
+          <span className="font-display font-bold" style={{ fontSize: "18px", lineHeight: 1 }}>
+            {tile.rank ?? ""}
+          </span>
+        )}
+        <div className="flex items-center justify-center" style={{ gap: "1px" }}>
+          {Array.from({ length: Math.min(SET_COUNT[kind] ?? 3, 3) }).map((_, i) => (
+            <Mini key={i} tile={tile} />
+          ))}
+          {tile.usedJoker && (
+            <span style={{ color: "var(--gold)", fontSize: "11px", marginLeft: "1px" }} aria-hidden>
+              ★
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   // Partial run: show the two ranks + a faded "needs N" so the next step reads.
   if (kind === "partial" && tile.partRanks) {
@@ -100,10 +163,11 @@ function CompletedFace({ tile, learningLabel }: { tile: Tile; learningLabel?: bo
     );
   }
 
-  const count = kind === "pair" ? 2 : 3;
+  // Cap the glyph pips at 3; the KONG/QUINT ribbon conveys the true count.
+  const count = Math.min(SET_COUNT[kind] ?? 3, 3);
   return (
     <div className="relative flex h-full w-full flex-col items-center justify-center gap-0.5" style={{ color: accent }}>
-      <span className="composite-ribbon">{learningLabel ? RIBBON[kind] ?? kind.toUpperCase() : kind.toUpperCase()}</span>
+      <span className="composite-ribbon">{label}</span>
 
       {kind === "run" ? (
         <div className="flex items-end gap-0.5 font-display font-bold" style={{ fontSize: "clamp(13px, 4.5vw, 20px)" }}>
@@ -137,10 +201,12 @@ export function TileFace({
   tile,
   highContrast,
   learningLabel,
+  compact,
 }: {
   tile: Tile;
   highContrast: boolean;
   learningLabel?: boolean;
+  compact?: boolean;
 }) {
   return (
     <>
@@ -148,7 +214,7 @@ export function TileFace({
       {tile.state === "loose" ? (
         <LooseFace tile={tile} highContrast={highContrast} />
       ) : (
-        <CompletedFace tile={tile} learningLabel={learningLabel} />
+        <CompletedFace tile={tile} learningLabel={learningLabel} compact={compact} />
       )}
     </>
   );

@@ -10,8 +10,10 @@ export type LooseTileKind = "number" | "dragon" | "joker";
 /**
  * "partial" is a two-tile partial run (1·2 or 2·3 of one suit) — the visible
  * intermediate step toward a run, exactly as a pair is the step toward a pung.
+ * "kong" (4 of a kind) and "quint" (5 of a kind) extend a pung on advanced
+ * levels: pung + match → kong, kong + match → quint.
  */
-export type CompletedSetKind = "pair" | "pung" | "run" | "partial";
+export type CompletedSetKind = "pair" | "pung" | "kong" | "quint" | "run" | "partial";
 
 /**
  * A single game piece. Loose tiles are the raw draws; completed tiles are the
@@ -68,8 +70,11 @@ export const CELL_COUNT = BOARD_SIZE * BOARD_SIZE;
 export type CombineEventType =
   | "pair"
   | "pung"
+  | "kong"
+  | "quint"
   | "dragon-pair"
   | "dragon-pung"
+  | "dragon-kong"
   | "partial-run"
   | "run";
 
@@ -104,6 +109,8 @@ export type MoveResult = {
 export type TargetRequirementKind =
   | "any-pair"
   | "number-pung"
+  | "number-kong" // four of a kind (advanced)
+  | "number-quint" // five of a kind (advanced)
   | "suited-run"
   | "dragon-set"
   | "suit-set" // a pung or run of a specific suit
@@ -127,6 +134,33 @@ export type TargetPattern = {
   id: string;
   name: string;
   requirements: TargetRequirement[];
+};
+
+/** A target hand is just a target pattern; alias kept for the solvability API. */
+export type TargetHand = TargetPattern;
+
+/** A future draw is identified by its loose-tile type. */
+export type TileDefinition = TileTypeId;
+
+// ---------------------------------------------------------------------------
+// Solvability analysis
+// ---------------------------------------------------------------------------
+
+/**
+ * The verdict of the fairness checker: whether a target hand can still be
+ * completed from the current board plus the tiles that can still arrive.
+ */
+export type SolvabilityResult = {
+  /** True when every unfilled requirement has a feasible recipe. */
+  solvable: boolean;
+  /** 0..1 — how comfortably achievable (1 = ample supply/space, low = tight). */
+  confidence: number;
+  /** Human-readable labels of requirements with no feasible recipe. */
+  missingRequirements: string[];
+  /** Real tiles (by type) still needed across the cheapest full assignment. */
+  requiredTileCounts: Record<string, number>;
+  /** Concrete reasons a hand is unsolvable or precarious. */
+  blockingReasons: string[];
 };
 
 // ---------------------------------------------------------------------------

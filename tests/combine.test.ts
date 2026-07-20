@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { tryCombine } from "@/game/rules/combine";
 import { loose } from "./helpers";
 import {
+  makeKong,
   makePair,
   makePartialRun,
   makePung,
@@ -88,5 +89,48 @@ describe("tryCombine — jokers", () => {
 
   it("terminal sets never combine further", () => {
     expect(tryCombine(makePung({ suit: "dot", rank: 1 }), loose("dot-1"))).toBeNull();
+  });
+});
+
+describe("tryCombine — kongs & quints (advanced)", () => {
+  const ADV = { kongs: true };
+
+  it("pungs are terminal unless kongs are enabled", () => {
+    expect(tryCombine(makePung({ suit: "dot", rank: 1 }), loose("dot-1"))).toBeNull();
+    expect(tryCombine(makePung({ suit: "dot", rank: 1 }), loose("dot-1"), ADV)!.event).toBe("kong");
+  });
+
+  it("pung + match → kong, kong + match → quint (keeps anchor id)", () => {
+    const kong = tryCombine(makePung({ suit: "bam", rank: 2 }, false, "anchor"), loose("bam-2"), ADV)!;
+    expect(kong.event).toBe("kong");
+    expect(kong.tile.setKind).toBe("kong");
+    expect(kong.tile.id).toBe("anchor");
+    const quint = tryCombine(kong.tile, loose("bam-2"), ADV)!;
+    expect(quint.event).toBe("quint");
+    expect(quint.tile.setKind).toBe("quint");
+  });
+
+  it("a joker extends a pung to a kong (marked usedJoker)", () => {
+    const c = tryCombine(makePung({ suit: "crak", rank: 3 }), loose("joker"), ADV)!;
+    expect(c.event).toBe("kong");
+    expect(c.usedJoker).toBe(true);
+  });
+
+  it("dragons kong the same way", () => {
+    const c = tryCombine(makePung({ dragon: "green" }), loose("dragon-green"), ADV)!;
+    expect(c.event).toBe("dragon-kong");
+    expect(c.tile.setKind).toBe("kong");
+  });
+
+  it("a quint is terminal even with kongs enabled", () => {
+    const quint = makeKong({ suit: "dot", rank: 1 });
+    const q = tryCombine(quint, loose("dot-1"), ADV)!;
+    expect(q.event).toBe("quint");
+    expect(tryCombine(q.tile, loose("dot-1"), ADV)).toBeNull();
+  });
+
+  it("a non-matching tile never extends a pung", () => {
+    expect(tryCombine(makePung({ suit: "dot", rank: 1 }), loose("dot-2"), ADV)).toBeNull();
+    expect(tryCombine(makePung({ suit: "dot", rank: 1 }), loose("bam-1"), ADV)).toBeNull();
   });
 });

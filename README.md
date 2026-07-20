@@ -64,8 +64,14 @@ closer; combines on a *later* swipe). `[1 1 1 _]` → `[Pair 1 _ _]` (no chain).
 into a pair (one cell).
 
 **Pung** — a pair plus one more matching loose tile becomes a pung. Dragon pairs
-become dragon pungs the same way. Pungs are terminal; there are no upgrades
-beyond a pung, and no pair+pair or pung+anything merges.
+become dragon pungs the same way. On easy/medium rounds a pung is terminal.
+
+**Kong & Quint (advanced)** — from `CONFIG.ADVANCED_ROUND` onward, the pung line
+extends two more steps: pung + matching tile → **Kong** (four of a kind), and
+kong + matching tile → **Quint** (five, terminal). Jokers extend them too.
+Kong/Quint target hands are only ever dealt once these are unlocked, so a
+kong‑requiring hand is never impossible to build. A bigger set also satisfies a
+smaller slot (a kong fills an `any‑set` or `number‑pung`).
 
 **Run (two‑stage)** — every combination in CRAK! is a **two‑tile collision**, so
 runs work exactly like pair→pung: slide `1`+`2` (or `2`+`3`) of one suit together
@@ -86,20 +92,35 @@ the one-step engine applies when a tile steps into its forward neighbour:
 - same rank → **pair**; adjacent ranks (same suit) → **partial run**; matching
   dragons → **dragon pair**;
 - **pair** + matching tile (or joker) → **pung**; **partial run** + the missing
-  rank (or joker) → **run** (terminal).
+  rank (or joker) → **run** (terminal);
+- on advanced rounds (`RuleOptions.kongs`): **pung** + match → **kong**, **kong**
+  + match → **quint** (terminal).
 
 The result carries the anchor's id, so the composite set stays in the neighbour's
 cell. It lives in `game/rules/combine.ts`. During learning hand 1 the run rule is
 switched off (`RuleOptions.runs`) so partial runs can't appear before they're
 taught.
 
-**Spawn cadence.** Because one-cell movement takes more swipes to line tiles up,
-a tile spawns only after **every 2nd non-combining swipe** (every **3rd** in
-beginner/learning mode). Combining swipes never spawn (they already earn room).
-The new tile enters from the **edge opposite the swipe**, after movement and any
-combination finish, with an entrance slide and a brief "newest" ring. An invalid
-swipe changes nothing and spawns nothing. This spawn rule (Option B in the brief)
-was chosen by simulation over spawning every move — see *Balance & play-testing*.
+**Spawn model.** Exactly **one new tile enters after every valid swipe** — a
+swipe that moved a tile, combined tiles, or advanced a partial set. Because a
+combining swipe first removes what it fused, it nets zero, so skilled play keeps
+the board flowing while idle shuffling fills it. The new tile enters from the
+**edge opposite the swipe** (preferring an open edge cell, else the nearest open
+cell walking inward), after movement and any combination finish, with an
+entrance slide and a brief "newest" ring. It never overwrites an existing tile.
+An invalid swipe changes nothing and spawns nothing. To keep this faster fill
+fair, reinforcement rises with board fullness (see *Tile spawning*) and a
+solvability check steers spawns so a required tile never starves.
+
+**Solvability (mathematical fairness).** `game/solvability.ts` exposes
+`evaluateHandSolvability(gameState, targetHand, futureBag)`, a pure,
+deterministic checker returning `{ solvable, confidence, missingRequirements,
+requiredTileCounts, blockingReasons }`. It runs (a) before a hand is dealt — a
+hand that can't be built from the board and supply is re‑rolled — and (b) before
+every spawn — when confidence drops, the fair bag is steered toward the
+still‑needed tile. It separates hard feasibility (is a recipe possible given the
+allowed tile pool and whether Kongs are unlocked?) from soft confidence (how
+close is the board, is it congested, is it deadlocked?).
 
 **Undo.** Up to **three** undos per game (`CONFIG.UNDO_COUNT`), restoring the
 exact board, score, target progress, spawn bag and RNG. Precise one-cell
@@ -194,12 +215,15 @@ target‑aware weighting toward the suits the current hand needs and a **dragon
 focus** (when a dragon set is required, one colour is emphasised so a dragon
 pair/pung is actually reachable — dragons are otherwise far too sparse to pair).
 
-On top of the bag, ~66% of spawns are **reinforcement** draws: a tile chosen to
+On top of the bag, most spawns are **reinforcement** draws: a tile chosen to
 combine with what's already on the board (complete a pung from a pair, fill a
 1‑2‑3 run gap, or pair up a lone tile). Without this, random spawns over 13 tile
-types simply pile up as junk. Reinforcement diversifies away from the
-just‑spawned tile so no single type floods the board (identical spawns are
-capped at three in a row). A small flat **Joker** chance (~4%) sits on top so the
+types simply pile up as junk. The reinforcement chance starts at **70%** and
+**rises with board fullness** (up to 95% on a nearly full board), since under the
+spawn‑every‑swipe model a congested board needs combinable tiles to drain itself
+back down. Reinforcement diversifies away from the just‑spawned tile so no single
+type floods the board (identical spawns are capped at three in a row). A
+solvability steer overrides the roll when a target tile is starving. A small flat **Joker** chance (~4%) sits on top so the
 taught wild mechanic actually appears — about one or two per game. The remaining
 fraction stays fair‑bag random for variety. Randomness is a deterministic
 `mulberry32` state stored in the game, so a game is reproducible and undo can
