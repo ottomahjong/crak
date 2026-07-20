@@ -40,6 +40,58 @@ export const PLAIN_LABEL: Record<TargetRequirementKind, string> = {
   "any-set": "ANY THREE-TILE SET",
 };
 
+const SUIT_TITLE: Record<Suit, string> = { dot: "Dot", bam: "Bam", crak: "Crak" };
+
+/** A short, single-token label for a requirement chip (e.g. "Pair", "Bam Run"). */
+export function shortRequirementLabel(r: Pick<TargetRequirement, "kind" | "suit">): string {
+  const suit = r.suit ? SUIT_TITLE[r.suit] : "";
+  switch (r.kind) {
+    case "any-pair":
+      return "Pair";
+    case "number-pung":
+      return "Pung";
+    case "number-kong":
+      return "Kong";
+    case "number-quint":
+      return "Quint";
+    case "suited-run":
+      return "Run";
+    case "suit-run":
+      return `${suit} Run`;
+    case "dragon-set":
+      return "Dragon";
+    case "suit-set":
+      return `${suit} Set`;
+    case "any-set":
+      return "Set";
+  }
+}
+
+/** A plain-language "what it is" line for the explanation modal. */
+export function plainRequirementPhrase(r: Pick<TargetRequirement, "kind" | "suit">): string {
+  const suit = r.suit ? SUIT_TITLE[r.suit] : "one suit";
+  switch (r.kind) {
+    case "any-pair":
+      return "Two matching tiles";
+    case "number-pung":
+      return "Three matching tiles";
+    case "number-kong":
+      return "Four matching tiles";
+    case "number-quint":
+      return "Five matching tiles";
+    case "suited-run":
+      return "1 · 2 · 3 of one suit";
+    case "suit-run":
+      return `1 · 2 · 3 of ${suit}`;
+    case "dragon-set":
+      return "A pair or pung of matching dragons";
+    case "suit-set":
+      return `A pung or run made of ${suit}`;
+    case "any-set":
+      return "Any pung or run";
+  }
+}
+
 /** One-sentence explanation for each requirement kind (shown on tap). */
 export function explainRequirement(r: Pick<TargetRequirement, "kind" | "suit">): string {
   switch (r.kind) {

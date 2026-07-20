@@ -2,17 +2,17 @@
 
 import { useState } from "react";
 import type { TargetPattern, TargetRequirement } from "@/types";
-import { explainRequirement } from "@/data/targets";
-import { RequirementIcon } from "./RequirementIcon";
+import { shortRequirementLabel } from "@/data/targets";
+import { RequirementModal } from "./RequirementModal";
 
 /**
  * "Build this hand" — the four requirement slots assemble left→right into MAHJ.
- * During learning, plain-language labels lead ("TWO MATCHING TILES") with the
- * Mahjong term beneath. Tap any slot for a one-sentence explanation.
+ * Each slot is a clean, tappable chip showing the set it wants (Pair, Pung,
+ * Run…). Tapping opens a modal with a worked example and a plain explanation —
+ * the detail lives there, so the row itself stays uncluttered.
  */
 export function TargetHand({
   target,
-  learning,
   onExplainOpen,
 }: {
   target: TargetPattern;
@@ -25,12 +25,11 @@ export function TargetHand({
   const total = reqs.length;
   const oneLeft = filled === total - 1;
 
-  const toggle = (id: string) => {
-    setOpenId((cur) => {
-      const next = cur === id ? null : id;
-      if (next && onExplainOpen) onExplainOpen();
-      return next;
-    });
+  const openReq = reqs.find((r) => r.id === openId) ?? null;
+
+  const open = (id: string) => {
+    setOpenId(id);
+    onExplainOpen?.();
   };
 
   return (
@@ -47,13 +46,7 @@ export function TargetHand({
 
       <ol className="target-hand__slots" data-count={total}>
         {reqs.map((req) => (
-          <Slot
-            key={req.id}
-            req={req}
-            learning={learning}
-            open={openId === req.id}
-            onToggle={() => toggle(req.id)}
-          />
+          <Slot key={req.id} req={req} onOpen={() => open(req.id)} />
         ))}
         <li className="target-mahj" aria-hidden>
           <span className={filled === total ? "target-mahj__flag target-mahj__flag--on" : "target-mahj__flag"}>
@@ -67,43 +60,30 @@ export function TargetHand({
           One more set for Mahj!
         </p>
       )}
+
+      {openReq && (
+        <RequirementModal req={openReq} done={!!openReq.filledBy} onClose={() => setOpenId(null)} />
+      )}
     </section>
   );
 }
 
-function Slot({
-  req,
-  learning,
-  open,
-  onToggle,
-}: {
-  req: TargetRequirement;
-  learning?: boolean;
-  open: boolean;
-  onToggle: () => void;
-}) {
+function Slot({ req, onOpen }: { req: TargetRequirement; onOpen: () => void }) {
   const done = !!req.filledBy;
-  const primary = learning && req.plain ? req.plain : req.label;
-  const secondary = learning && req.plain ? req.label : undefined;
-
   return (
     <li className={`target-slot ${done ? "target-slot--done" : ""}`}>
       <button
         type="button"
         className="target-slot__btn"
-        aria-expanded={open}
-        aria-label={`${req.label}${done ? ", complete" : ", not yet"}. Tap for how it works.`}
-        onClick={onToggle}
+        aria-haspopup="dialog"
+        aria-label={`${shortRequirementLabel(req)}${done ? ", complete" : ", not yet"}. Tap for how it works.`}
+        onClick={onOpen}
       >
-        <span className="target-slot__icon" aria-hidden>
-          {done ? <span className="target-slot__check">✓</span> : <RequirementIcon req={req} />}
+        <span className="target-slot__pip" aria-hidden>
+          {done ? "✓" : "ⓘ"}
         </span>
-        <span className="target-slot__text">
-          <span className="target-slot__label">{primary}</span>
-          {secondary && <span className="target-slot__sub">{secondary}</span>}
-        </span>
+        <span className="target-slot__label">{shortRequirementLabel(req)}</span>
       </button>
-      {open && <p className="target-slot__explain">{explainRequirement(req)}</p>}
     </li>
   );
 }
