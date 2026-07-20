@@ -15,16 +15,20 @@ import { applyMove, entryLinesFor, hasAnyMove } from "@/game/rules/movement";
 import { reconcileTargets } from "@/game/rules/targets";
 import { scoreForEvents, handCompletionScore, SCORING } from "@/game/scoring";
 import {
-  buildBag,
-  drawTile,
+  drawFromWall,
   pickEmptyCell,
-  helpfulSpawn,
   REINFORCE_P,
   REINFORCE_P_MAX,
   REINFORCE_P_CONGESTION,
-  JOKER_SPAWN_P,
 } from "@/game/generator";
-import { nextRandom, randomSeed } from "@/lib/rng";
+import {
+  buildWall,
+  wallSize,
+  PRIMARY_WALL,
+  LEARNING_WALL,
+  type TileInventoryConfig,
+} from "@/game/inventory";
+import { randomSeed } from "@/lib/rng";
 import {
   instantiatePattern,
   instantiateLearningPattern,
@@ -45,6 +49,24 @@ const MIN_TILES_AFTER_HAND = 4;
 /** Below this solvability confidence, a spawn is steered toward a needed tile. */
 const STEER_CONFIDENCE = 0.5;
 
+/** With the wall empty, this many no-progress swipes ends the game (stalemate).
+ *  Generous enough never to cut short real maneuvering on a 4×4 board. */
+const STALEMATE_IDLE = 24;
+
+/** The finite wall configuration this state draws from. */
+export function wallConfigFor(learning?: LearningStage): TileInventoryConfig {
+  return learning ? LEARNING_WALL : PRIMARY_WALL;
+}
+
+/** Remove one copy of `type` from a wall array (returns a new array). */
+function removeFromWall(wall: TileTypeId[], type: TileTypeId): TileTypeId[] {
+  const i = wall.indexOf(type);
+  if (i === -1) return wall;
+  const next = wall.slice();
+  next.splice(i, 1);
+  return next;
+}
+
 // ---------------------------------------------------------------------------
 // Snapshot helpers (used for undo)
 // ---------------------------------------------------------------------------
@@ -57,10 +79,10 @@ export function snapshot(state: GameState): GameSnapshot {
     multiplier: state.multiplier,
     target: cloneTarget(state.target),
     status: state.status,
-    bag: [...state.bag],
+    wall: [...state.wall],
     rngState: state.rngState,
     recentSpawns: [...state.recentSpawns],
-    movesSinceSpawn: state.movesSinceSpawn,
+    idleSwipes: state.idleSwipes,
     elapsedMs: state.elapsedMs,
     handsCompleted: state.handsCompleted,
     setsCreated: state.setsCreated,
@@ -82,10 +104,10 @@ export function restoreSnapshot(state: GameState, snap: GameSnapshot): GameState
     multiplier: snap.multiplier,
     target: cloneTarget(snap.target),
     status: snap.status,
-    bag: [...snap.bag],
+    wall: [...snap.wall],
     rngState: snap.rngState,
     recentSpawns: [...snap.recentSpawns],
-    movesSinceSpawn: snap.movesSinceSpawn,
+    idleSwipes: snap.idleSwipes,
     elapsedMs: snap.elapsedMs,
     handsCompleted: snap.handsCompleted,
     setsCreated: snap.setsCreated,
@@ -107,7 +129,7 @@ function emptyCells(board: Board): number[] {
 
 type SpawnOutcome = {
   board: Board;
-  bag: GameState["bag"];
+  wall: GameState["wall"];
   rngState: number;
   recentSpawns: GameState["recentSpawns"];
   spawnedCell: number | null;
@@ -138,107 +160,53 @@ function pickSpawnCell(
 function spawnOne(
   board: Board,
   target: TargetPattern,
-  bag: GameState["bag"],
+  wall: GameState["wall"],
   rngState: number,
   recentSpawns: GameState["recentSpawns"],
+  cfg: TileInventoryConfig,
   direction?: Direction,
   allowed?: ReadonlySet<TileTypeId>,
   forcedType?: TileTypeId | null,
 ): SpawnOutcome {
   const empties = emptyCells(board);
-  if (empties.length === 0) {
-    return { board, bag, rngState, recentSpawns, spawnedCell: null, spawnedTile: null };
-  }
+  const none: SpawnOutcome = {
+    board,
+    wall,
+    rngState,
+    recentSpawns,
+    spawnedCell: null,
+    spawnedTile: null,
+  };
+  if (empties.length === 0) return none; // board full — nothing to place onto
 
-  // Solvability steering: when a required tile is starving, the caller forces
-  // its type so a hand never dies of bad luck. Placed straight away, bypassing
-  // the joker roll / reinforcement / bag draw.
-  if (forcedType && (!allowed || allowed.has(forcedType))) {
-    const placedF = pickSpawnCell(board, direction, rngState);
-    const fTile = makeLooseFromType(forcedType);
-    const fb = board.slice();
-    fb[placedF.cell] = fTile;
-    return {
-      board: fb,
-      bag,
-      rngState: placedF.rngState,
-      recentSpawns: [...recentSpawns, forcedType].slice(-8),
-      spawnedCell: placedF.cell,
-      spawnedTile: fTile,
-    };
-  }
-
-  let rs = rngState;
-  let type: TileTypeId;
-  let nextBag = bag;
-  let nextRecent = recentSpawns;
-
-  // Small flat chance of a Joker so this taught, wild mechanic actually shows up
-  // (the fair bag alone, diluted by reinforcement, made jokers almost invisible).
-  // Never two jokers in a row.
-  const jokerRoll = nextRandom(rs);
-  rs = jokerRoll.state;
-  const lastSpawn = recentSpawns[recentSpawns.length - 1];
-  const jokerAllowed = !allowed || allowed.has("joker");
-  if (jokerAllowed && jokerRoll.value < JOKER_SPAWN_P && lastSpawn !== "joker") {
-    const placedJ = pickSpawnCell(board, direction, rs);
-    const jokerTile = makeLooseFromType("joker");
-    const jb = board.slice();
-    jb[placedJ.cell] = jokerTile;
-    return {
-      board: jb,
-      bag,
-      rngState: placedJ.rngState,
-      recentSpawns: [...recentSpawns, "joker" as TileTypeId].slice(-8),
-      spawnedCell: placedJ.cell,
-      spawnedTile: jokerTile,
-    };
-  }
-
-  // Roll for a reinforcement spawn (a tile that combines with the board) vs a
-  // fair-bag draw. Reinforcement keeps the board from choking on random junk.
-  // Because every swipe now spawns, a congested board needs combinable tiles
-  // urgently — so the reinforcement chance rises with board fullness (empty
-  // cells falling), giving the player the pieces to combine the board back down.
-  const roll = nextRandom(rs);
-  rs = roll.state;
-
-  const fullness = 1 - empties.length / CELL_COUNT; // 0 empty-ish … 1 nearly full
+  // Reinforcement rises with board fullness: a congested board urgently needs
+  // combinable tiles (every swipe spawns), so a near-full board reinforces
+  // almost every time — but only ever with tiles the wall still holds.
+  const fullness = 1 - empties.length / CELL_COUNT;
   const reinforceP = Math.min(REINFORCE_P_MAX, REINFORCE_P + fullness * REINFORCE_P_CONGESTION);
 
-  let reinforced: TileTypeId | null = null;
-  if (roll.value < reinforceP) {
-    // Fairness: once a tile has been spawned twice in a row, tell reinforcement
-    // to pick a *different* helpful tile rather than flooding one type.
-    const last = recentSpawns[recentSpawns.length - 1];
-    let trailing = 0;
-    for (let i = recentSpawns.length - 1; i >= 0 && recentSpawns[i] === last; i--) trailing++;
-    const avoid = trailing >= 2 ? last : undefined;
-    const h = helpfulSpawn(board, target, rs, avoid, allowed);
-    rs = h.rngState;
-    reinforced = h.type;
-  }
+  const draw = drawFromWall({
+    wall,
+    rngState,
+    recentSpawns,
+    board,
+    target,
+    cfg,
+    allowed,
+    reinforceP,
+    forcedType,
+  });
+  if (!draw) return none; // the wall is spent — no tile can spawn
 
-  if (reinforced) {
-    type = reinforced;
-    nextRecent = [...recentSpawns, type].slice(-8);
-  } else {
-    const draw = drawTile({ bag, rngState: rs, recentSpawns }, target, board, allowed);
-    type = draw.type;
-    nextBag = draw.bag;
-    rs = draw.rngState;
-    nextRecent = draw.recentSpawns;
-  }
-
-  const placed = pickSpawnCell(board, direction, rs);
-  const tile = makeLooseFromType(type);
+  const placed = pickSpawnCell(board, direction, draw.rngState);
+  const tile = makeLooseFromType(draw.type);
   const nextBoard = board.slice();
   nextBoard[placed.cell] = tile;
   return {
     board: nextBoard,
-    bag: nextBag,
+    wall: draw.wall,
     rngState: placed.rngState,
-    recentSpawns: nextRecent,
+    recentSpawns: draw.recentSpawns,
     spawnedCell: placed.cell,
     spawnedTile: tile,
   };
@@ -256,31 +224,40 @@ export function createInitialState(
     ? instantiateLearningPattern(learning)
     : instantiatePattern(OPENING_PATTERN_ID);
   let board: Board = new Array(CELL_COUNT).fill(null);
-  let bag: GameState["bag"] = [];
   let rngState = seed >>> 0 || 1;
   let recentSpawns: GameState["recentSpawns"] = [];
   const allowed = learningPool(learning);
+  const cfg = wallConfigFor(learning);
 
-  // Prime the bag.
-  const primed = buildBag(target, rngState, board, allowed);
-  bag = primed.bag;
-  rngState = primed.rngState;
+  // Build the finite wall — every tile the game will ever deal.
+  const built = buildWall(cfg, rngState, allowed);
+  let wall = built.wall;
+  rngState = built.rngState;
+  const wallStart = wall.length;
 
   if (learning === 1) {
     // Fixed opening for the very first hand, tuned for ONE-STEP movement: the
     // two 1 Dots are two cells apart in a row, so the player learns "one swipe =
     // one space" (bring them adjacent) then "swipe again to combine" — the
-    // first pair in ~2 swipes. Two 2 Dots seed the pung.
-    board[4] = makeLooseFromType("dot-1"); // row 1, col 0 (at the edge)
-    board[6] = makeLooseFromType("dot-1"); // row 1, col 2
-    board[9] = makeLooseFromType("dot-2"); // row 2, col 1
-    board[11] = makeLooseFromType("dot-2"); // row 2, col 3
+    // first pair in ~2 swipes. Two 2 Dots seed the pung. These come OUT of the
+    // wall so inventory stays honest.
+    const opening: Array<[number, TileTypeId]> = [
+      [4, "dot-1"],
+      [6, "dot-1"],
+      [9, "dot-2"],
+      [11, "dot-2"],
+    ];
+    for (const [cell, type] of opening) {
+      board[cell] = makeLooseFromType(type);
+      wall = removeFromWall(wall, type);
+    }
   } else {
     const count = learning ? CONFIG.INITIAL_TILES_BEGINNER : CONFIG.INITIAL_TILES;
     for (let i = 0; i < count; i++) {
-      const out = spawnOne(board, target, bag, rngState, recentSpawns, undefined, allowed);
+      const out = spawnOne(board, target, wall, rngState, recentSpawns, cfg, undefined, allowed);
+      if (!out.spawnedTile) break; // wall exhausted (shouldn't happen at deal time)
       board = out.board;
-      bag = out.bag;
+      wall = out.wall;
       rngState = out.rngState;
       recentSpawns = out.recentSpawns;
     }
@@ -294,10 +271,11 @@ export function createInitialState(
     target,
     status: "playing",
     learning,
-    bag,
+    wall,
+    wallStart,
     rngState,
     recentSpawns,
-    movesSinceSpawn: 0,
+    idleSwipes: 0,
     undosRemaining: CONFIG.UNDO_COUNT,
     undoStack: [],
     elapsedMs: 0,
@@ -385,20 +363,21 @@ export function move(state: GameState, direction: Direction): MoveOutcome {
   // exactly one new tile. A combining swipe removed what it fused, so the fresh
   // tile nets the board back — skilled play keeps it flowing; idle shuffling
   // fills it. The hand is never spawned onto once complete.
-  let spawn = {
+  let spawn: SpawnOutcome = {
     board: reconciled.board,
-    bag: state.bag,
+    wall: state.wall,
     rngState: state.rngState,
     recentSpawns: state.recentSpawns,
-    spawnedCell: null as number | null,
-    spawnedTile: null as Tile | null,
+    spawnedCell: null,
+    spawnedTile: null,
   };
 
   if (!reconciled.complete) {
-    // Recalculate achievability and, if a required tile is starving, steer the
-    // spawn to supply it — the fairness guarantee that a hand stays winnable.
+    // Recalculate achievability against the finite wall and, if a required tile
+    // is starving (or scarce in the wall), steer the draw toward it — the
+    // fairness guarantee that a hand stays winnable while the wall allows it.
     const projectedState = { ...state, board: reconciled.board, target: reconciled.target };
-    const solvability = evaluateHandSolvability(projectedState, reconciled.target, state.bag);
+    const solvability = evaluateHandSolvability(projectedState, reconciled.target, state.wall);
     const steer =
       solvability.confidence < STEER_CONFIDENCE
         ? steerTypeForTarget(projectedState, reconciled.target)
@@ -407,20 +386,41 @@ export function move(state: GameState, direction: Direction): MoveOutcome {
     spawn = spawnOne(
       reconciled.board,
       reconciled.target,
-      state.bag,
+      state.wall,
       state.rngState,
       state.recentSpawns,
+      wallConfigFor(state.learning),
       direction,
       learningPool(state.learning),
       steer,
     );
   }
 
+  // Track swipes that made no set progress. Reset on any combine or target
+  // fill; accumulate on pure shuffles. Only matters once the wall is empty.
+  const madeProgress = raw.events.length > 0 || reconciled.newlyFilled.length > 0;
+  const idleSwipes = madeProgress ? 0 : state.idleSwipes + 1;
+
   const handCompleted = reconciled.complete;
-  const gameOver =
-    !handCompleted &&
-    emptyCells(spawn.board).length === 0 &&
-    !hasAnyMove(spawn.board, ruleOpts);
+  const wallEmpty = spawn.wall.length === 0;
+  const noMoves = !hasAnyMove(spawn.board, ruleOpts);
+  const boardFull = emptyCells(spawn.board).length === 0;
+  // Finite-wall endgame. Game over when: no move can change the board and no
+  // help is coming (board full, or the wall is spent); or the wall is spent and
+  // the hand can no longer be completed from what remains; or the wall is spent
+  // and the player has shuffled STALEMATE_IDLE swipes without any progress (the
+  // board is solvable in principle but the player is stuck — a wall-game draw).
+  let gameOver = !handCompleted && noMoves && (boardFull || wallEmpty);
+  if (!handCompleted && !gameOver && wallEmpty) {
+    if (idleSwipes >= STALEMATE_IDLE) {
+      gameOver = true;
+    } else {
+      const finalState = { ...state, board: spawn.board, target: reconciled.target };
+      if (!evaluateHandSolvability(finalState, reconciled.target, spawn.wall).solvable) {
+        gameOver = true;
+      }
+    }
+  }
 
   // Undo history: push the pre-move snapshot, bounded to the free-undo count.
   const undoStack = [...state.undoStack, snap].slice(-CONFIG.UNDO_COUNT);
@@ -430,10 +430,10 @@ export function move(state: GameState, direction: Direction): MoveOutcome {
     board: spawn.board,
     score: state.score + scoreDelta,
     target: reconciled.target,
-    bag: spawn.bag,
+    wall: spawn.wall,
     rngState: spawn.rngState,
     recentSpawns: spawn.recentSpawns,
-    movesSinceSpawn: 0, // vestigial: every valid swipe now spawns
+    idleSwipes,
     setsCreated,
     suitCounts,
     status: handCompleted ? "won-hand" : gameOver ? "game-over" : "playing",
@@ -552,7 +552,7 @@ export function completeHand(state: GameState): HandCompletionResult {
         round: nextRound,
         learning: undefined,
       };
-      if (evaluateHandSolvability(probeState, probe.target, state.bag).solvable) break;
+      if (evaluateHandSolvability(probeState, probe.target, state.wall).solvable) break;
       picked = pickPatternForRound(nextRound, picked.pattern.id, picked.rngState);
     }
     pattern = picked.pattern;
@@ -563,27 +563,30 @@ export function completeHand(state: GameState): HandCompletionResult {
 
   // Guarantee the next round is playable. If cashing in the hand left the board
   // empty (or nearly so — e.g. the whole board WAS the four scoring sets), seed
-  // fresh tiles. Without this the board can dead-lock: no tiles to move means no
-  // move, and spawns only happen after a move.
+  // fresh tiles FROM THE WALL. If the wall is spent, we seed what we can and let
+  // the finite endgame play out. Without this the board can dead-lock: no tiles
+  // to move means no move, and spawns only happen after a move.
   let seededBoard = reconciled.board;
-  let bag = state.bag;
+  let wall = state.wall;
   let rngState = rngAfterPick;
   let recentSpawns = state.recentSpawns;
   let tileCount = seededBoard.filter(Boolean).length;
   const allowed = learningPool(nextLearning);
+  const cfg = wallConfigFor(nextLearning);
   while (tileCount < MIN_TILES_AFTER_HAND) {
     const out = spawnOne(
       seededBoard,
       reconciled.target,
-      bag,
+      wall,
       rngState,
       recentSpawns,
+      cfg,
       undefined,
       allowed,
     );
-    if (out.spawnedTile == null) break; // board full (shouldn't happen here)
+    if (out.spawnedTile == null) break; // board full, or the wall is spent
     seededBoard = out.board;
-    bag = out.bag;
+    wall = out.wall;
     rngState = out.rngState;
     recentSpawns = out.recentSpawns;
     tileCount++;
@@ -598,10 +601,10 @@ export function completeHand(state: GameState): HandCompletionResult {
     multiplier: Math.round((state.multiplier + SCORING.multiplierStep) * 100) / 100,
     handsCompleted: state.handsCompleted + 1,
     learning: nextLearning,
-    bag,
+    wall,
     rngState,
     recentSpawns,
-    movesSinceSpawn: 0,
+    idleSwipes: 0,
     // A new hand starts a fresh undo history (can't undo across a Mahj).
     undoStack: [],
     status: "playing",

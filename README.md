@@ -195,39 +195,59 @@ All constants live in `game/scoring.ts`:
 Pungs and runs are scored highest because they consume the most tiles and free
 the most space — the plays that actually sustain a run.
 
-## Tile spawning (where new tiles come from)
+## The finite tile wall (where new tiles come from)
 
-Every new tile **enters from the edge opposite the swipe** — swipe left and it
-slides in from the right edge, swipe up and it drops from the bottom — landing in
-an empty cell on that edge (or the nearest legal cell inward). It appears **only
-after** the move and any combinations have finished animating, never in the same
-frame as a merge, with its own entrance slide, a brief "newest tile" ring, and a
-distinct soft sound. The three phases of a swipe — tiles move (~160 ms), sets
-combine (~180 ms), a new tile enters (~160 ms) — are kept visually separate and
-input is locked until the sequence finishes. A first‑time callout ("A new tile
-entered from the right") shows for the first few swipes. Entry geometry lives in
-`game/rules/movement.ts` (`entryLinesFor`/`entryEdgeFor`).
+CRAK! draws from a **finite, American Mahjong‑inspired wall**, not an endless
+stream — this is the mechanic that separates it from Threes / 2048. Every tile
+that ever appears on the board is one draw removed from a known inventory; once
+all copies of a tile are gone, no more can appear. The wall is the game's clock:
+you race to bank hands before it runs dry, and a **wall meter** in the top bar
+shows the tiles remaining.
 
-Which tile appears is a **fair‑bag** generator (`game/generator.ts`): a balanced,
-shuffled bag
-(numbers common, dragons uncommon, joker rare) is drawn down and refilled, with
-target‑aware weighting toward the suits the current hand needs and a **dragon
-focus** (when a dragon set is required, one colour is emphasised so a dragon
-pair/pung is actually reachable — dragons are otherwise far too sparse to pair).
+**All inventory lives in one place** — `game/inventory.ts`. Nothing else in the
+engine hard‑codes a tile count. The canonical `STANDARD_TILE_INVENTORY` is the
+full 158‑tile American Mahjong wall:
 
-On top of the bag, most spawns are **reinforcement** draws: a tile chosen to
-combine with what's already on the board (complete a pung from a pair, fill a
-1‑2‑3 run gap, or pair up a lone tile). Without this, random spawns over 13 tile
-types simply pile up as junk. The reinforcement chance starts at **70%** and
-**rises with board fullness** (up to 95% on a nearly full board), since under the
-spawn‑every‑swipe model a congested board needs combinable tiles to drain itself
-back down. Reinforcement diversifies away from the just‑spawned tile so no single
-type floods the board (identical spawns are capped at three in a row). A
-solvability steer overrides the roll when a target tile is starving. A small flat **Joker** chance (~4%) sits on top so the
-taught wild mechanic actually appears — about one or two per game. The remaining
-fraction stays fair‑bag random for variety. Randomness is a deterministic
-`mulberry32` state stored in the game, so a game is reproducible and undo can
-restore RNG.
+| Group | Count |
+| --- | --- |
+| Numbered suits (3 suits × 9 ranks × 4) | 108 |
+| Winds (E/S/W/N × 4) | 16 |
+| Dragons (3 colours × 4) | 12 |
+| Flowers (unique) | 12 |
+| Jokers | 10 |
+| **Total** | **158** |
+
+The primary game mode deals from `PRIMARY_WALL`, a strict subset restricted to
+the families the engine has combination rules for today — numbered suits at
+ranks **1–3** (so the two‑stage 1·2·3 run stays unambiguous), Dragons and
+Jokers, at the canonical 4 copies each. Winds, Flowers and ranks 4–9 are fully
+specified in the canonical config and switch on here once their rules land — a
+config change, not an engine rewrite. Learning hands use a forgiving,
+reshuffling wall so onboarding is never cut short by an empty wall.
+
+**Entry & animation.** Every new tile **enters from the edge opposite the swipe**
+— swipe left and it slides in from the right edge — landing in an empty cell on
+that edge (or the nearest legal cell inward), never overwriting a tile. It
+appears **only after** the move and any combinations have finished animating,
+with its own entrance slide, a brief "newest tile" ring, and a distinct sound.
+Entry geometry lives in `game/rules/movement.ts` (`entryLinesFor`/`entryEdgeFor`).
+
+**Which tile comes out.** The wall is a fixed, shuffled multiset — it is never
+re‑weighted to add copies, so the draw distribution is honest and even. What the
+generator (`game/generator.ts`) influences is *which of the tiles still in the
+wall* comes next: with a chance that **rises with board fullness** (70% → 95%) it
+draws a **reinforcement** tile that combines with the board (finish a pung from a
+pair, fill a run gap, pair a lone tile), and a **solvability steer** can force a
+starving required tile — but only ever a tile the wall actually still holds. When
+the wall empties, no tile spawns; you play out the board. Randomness is a
+deterministic `mulberry32` state stored in the game, so a game is reproducible
+and undo can restore both the wall and the RNG.
+
+**The finite endgame.** A run ends when the wall is spent and the board can no
+longer progress: the current hand becomes unwinnable from what remains, the board
+jams with no legal move, or the player shuffles `STALEMATE_IDLE` swipes without
+any set progress (a wall‑game draw). Solvability (below) judges "unwinnable"
+exactly against the tiles left in the wall.
 
 ---
 

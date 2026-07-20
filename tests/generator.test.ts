@@ -1,63 +1,76 @@
 import { describe, it, expect } from "vitest";
-import { buildBag, drawTile, relevantTypes } from "@/game/generator";
+import { drawFromWall, relevantTypes } from "@/game/generator";
+import { buildWall, wallSize, PRIMARY_WALL, STANDARD_TILE_INVENTORY } from "@/game/inventory";
 import { instantiatePattern } from "@/data/targets";
+import { emptyBoard } from "./helpers";
+import type { TileTypeId } from "@/types";
 
-describe("fair bag", () => {
-  it("builds a non-empty shuffled bag", () => {
-    const target = instantiatePattern("A");
-    const { bag } = buildBag(target, 12345);
-    expect(bag.length).toBeGreaterThan(15);
-    expect(bag).toContain("joker");
+const FINITE = { ...PRIMARY_WALL, reshuffleWhenEmpty: false };
+
+describe("finite wall", () => {
+  it("the canonical wall totals 158 tiles", () => {
+    expect(wallSize(STANDARD_TILE_INVENTORY)).toBe(158);
   });
 
-  it("weights the bag toward the target's suit", () => {
-    const target = instantiatePattern("SUITS"); // DOT/BAM/CRAK sets
-    const { bag } = buildBag(target, 999);
-    const dots = bag.filter((t) => t.startsWith("dot-")).length;
-    // Base is 2 of each; weighting adds another copy of dot ranks.
-    expect(dots).toBeGreaterThanOrEqual(9);
-  });
-
-  it("emphasises a dragon colour when a dragon set is required", () => {
-    const target = instantiatePattern("GATE"); // has DRAGON SET
-    const { bag } = buildBag(target, 4321);
-    const counts: Record<string, number> = {};
-    for (const t of bag) if (t.startsWith("dragon-")) counts[t] = (counts[t] ?? 0) + 1;
-    const max = Math.max(...Object.values(counts));
-    // The focus colour gets extra copies (4) vs a baseline of 1.
-    expect(max).toBeGreaterThanOrEqual(4);
+  it("builds the primary wall with exactly the configured copy counts", () => {
+    const { wall } = buildWall(PRIMARY_WALL, 12345);
+    expect(wall.length).toBe(wallSize(PRIMARY_WALL));
+    // 4 copies of each suited tile, no more.
+    expect(wall.filter((t) => t === "dot-1").length).toBe(PRIMARY_WALL.suitedCopiesPerTile);
+    expect(wall.filter((t) => t === "joker").length).toBe(PRIMARY_WALL.jokerCount);
   });
 
   it("is deterministic for a fixed seed", () => {
-    const target = instantiatePattern("A");
-    const a = buildBag(target, 42);
-    const b = buildBag(target, 42);
-    expect(a.bag).toEqual(b.bag);
+    expect(buildWall(PRIMARY_WALL, 42).wall).toEqual(buildWall(PRIMARY_WALL, 42).wall);
   });
 
-  it("draws until empty then refills", () => {
-    const target = instantiatePattern("A");
-    let state = { ...buildBag(target, 7), recentSpawns: [] as any };
-    const first = state.bag.length;
-    for (let i = 0; i < first; i++) {
-      const d = drawTile(state, target);
-      state = { bag: d.bag, rngState: d.rngState, recentSpawns: d.recentSpawns };
+  it("draws down to empty and then stops (finite, no refill)", () => {
+    const target = instantiatePattern("OPEN");
+    let wall = buildWall(FINITE, 7).wall;
+    const start = wall.length;
+    let rngState = 7;
+    let recentSpawns: TileTypeId[] = [];
+    let drawn = 0;
+    for (let i = 0; i < start + 5; i++) {
+      const d = drawFromWall({
+        wall, rngState, recentSpawns, board: emptyBoard(), target,
+        cfg: FINITE, reinforceP: 0.7,
+      });
+      if (!d) break;
+      wall = d.wall;
+      rngState = d.rngState;
+      recentSpawns = d.recentSpawns;
+      drawn++;
     }
-    expect(state.bag.length).toBe(0);
-    const refill = drawTile(state, target);
-    expect(refill.bag.length).toBeGreaterThan(0);
+    expect(drawn).toBe(start); // drew every tile, never one more
+    expect(wall.length).toBe(0);
+    // A further draw yields nothing — the wall is spent.
+    const after = drawFromWall({
+      wall, rngState, recentSpawns, board: emptyBoard(), target,
+      cfg: FINITE, reinforceP: 0.7,
+    });
+    expect(after).toBeNull();
   });
 
-  it("avoids more than three identical consecutive spawns", () => {
-    const target = instantiatePattern("A");
-    let state = {
-      bag: ["dot-1", "dot-1", "dot-1", "dot-1", "dot-1", "bam-2"] as any[],
-      rngState: 5,
-      recentSpawns: ["dot-1", "dot-1", "dot-1"] as any[],
-    };
-    const draw = drawTile(state as any, target);
-    // Already 3 dot-1 trailing; the guard should avoid a 4th.
-    expect(draw.type).not.toBe("dot-1");
+  it("a reshuffling wall rebuilds when emptied", () => {
+    const target = instantiatePattern("OPEN");
+    const cfg = { ...PRIMARY_WALL, reshuffleWhenEmpty: true };
+    const d = drawFromWall({
+      wall: [], rngState: 3, recentSpawns: [], board: emptyBoard(), target,
+      cfg, reinforceP: 0.7,
+    });
+    expect(d).not.toBeNull();
+  });
+
+  it("never draws a tile the wall does not hold", () => {
+    const target = instantiatePattern("OPEN");
+    // A wall with only two dragon tiles: draws can only be those.
+    const d = drawFromWall({
+      wall: ["dragon-red", "dragon-green"], rngState: 1, recentSpawns: [],
+      board: emptyBoard(), target, cfg: FINITE, reinforceP: 1,
+    })!;
+    expect(["dragon-red", "dragon-green"]).toContain(d.type);
+    expect(d.wall.length).toBe(1);
   });
 
   it("relevantTypes includes needed suit and joker", () => {

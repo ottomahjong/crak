@@ -1,25 +1,26 @@
 import type { Board, DragonColor, Suit, TargetPattern, TileTypeId } from "@/types";
 import { isPartialRun, missingRank } from "@/game/tiles";
-import { shuffle, nextRandom } from "@/lib/rng";
+import { nextRandom } from "@/lib/rng";
 import { ALL_TILE_TYPES, SUITS } from "@/game/tiles";
+import { buildWall, type TileInventoryConfig } from "@/game/inventory";
 
 // ---------------------------------------------------------------------------
-// Weighted "fair bag" tile generator
+// Drawing from the finite wall
 // ---------------------------------------------------------------------------
 //
-// A bag holds a balanced, shuffled distribution. We draw from the front until
-// empty, then refill + reshuffle. Each bag is built with awareness of BOTH the
-// current target and the current board, so the game tends to hand you the tiles
-// that finish what you have already started:
+// The wall (see game/inventory.ts) is a fixed, shuffled multiset. Every spawn
+// removes one tile from it; nothing is ever conjured beyond inventory. What the
+// generator DOES influence is *which* of the tiles still in the wall comes out
+// next:
 //
-//   • base distribution: numbers common, dragons uncommon, joker rare
-//   • target weighting: extra copies of suits the hand needs
-//   • dragon focus: when a dragon set is required, one colour is emphasised so
-//     pairs/pungs are actually reachable (dragons are otherwise too sparse)
-//   • board reinforcement: extra copies of tiles you already hold (finish a
-//     pair into a pung, complete a 1-2-3 run)
+//   • reinforcement — bias toward a tile that combines with the board (finish a
+//     pung from a pair, fill a 1-2-3 run gap, pair up a lone tile), chosen only
+//     among tiles the wall still holds;
+//   • anti-repeat / anti-starvation guards on the fair draws.
 //
-// Anti-repeat and anti-starvation guards run at draw time.
+// It can never add copies to make a hand easier — that is the finite wall's job
+// and the solvability system's concern. When the wall empties, a finite mode
+// returns no tile; a reshuffling mode (tutorials) rebuilds it.
 
 const NUMBER_TYPES: TileTypeId[] = [
   "dot-1", "dot-2", "dot-3",
@@ -48,6 +49,8 @@ export function relevantTypes(target: TargetPattern): Set<TileTypeId> {
         if (req.suit) suitTypes(req.suit).forEach((t) => set.add(t));
         break;
       case "number-pung":
+      case "number-kong":
+      case "number-quint":
       case "suited-run":
         addAllNumbers();
         break;
@@ -63,10 +66,6 @@ export function relevantTypes(target: TargetPattern): Set<TileTypeId> {
   }
   set.add("joker");
   return set;
-}
-
-function targetNeedsDragon(target: TargetPattern): boolean {
-  return target.requirements.some((r) => !r.filledBy && r.kind === "dragon-set");
 }
 
 /** Loose-tile type tallies on the board, ignoring completed sets and jokers. */
@@ -88,121 +87,20 @@ function looseTally(board: Board): {
 }
 
 /**
- * Choose which dragon colour the bag should emphasise: the colour the player
- * already holds the most of, else deterministic by RNG. Keeps dragon sets
- * reachable without flooding the board with useless mixed dragons.
- */
-function pickFocusDragon(board: Board, rngState: number): { color: DragonColor; rngState: number } {
-  const { dragons } = looseTally(board);
-  let best: DragonColor | null = null;
-  let bestN = 0;
-  for (const c of ["red", "green", "white"] as DragonColor[]) {
-    const n = dragons.get(c) ?? 0;
-    if (n > bestN) {
-      bestN = n;
-      best = c;
-    }
-  }
-  if (best) return { color: best, rngState };
-  const r = nextRandom(rngState);
-  const colors: DragonColor[] = ["red", "green", "white"];
-  return { color: colors[Math.floor(r.value * 3)], rngState: r.state };
-}
-
-/** Build one balanced, target- and board-weighted, shuffled bag. `allowed`
- * restricts the pool (learning hands introduce tile families one at a time). */
-export function buildBag(
-  target: TargetPattern,
-  rngState: number,
-  board?: Board,
-  allowed?: ReadonlySet<TileTypeId>,
-): { bag: TileTypeId[]; rngState: number } {
-  const ok = (t: TileTypeId) => !allowed || allowed.has(t);
-  const pool: TileTypeId[] = [];
-  // Base distribution: numbers common, dragons uncommon, joker rare.
-  for (const t of NUMBER_TYPES) if (ok(t)) pool.push(t, t);
-  for (const t of DRAGON_TYPES) if (ok(t)) pool.push(t);
-  if (ok("joker")) pool.push("joker");
-
-  let state = rngState;
-
-  // Target-aware weighting: one extra copy of each suit needed by the hand.
-  const neededSuits = new Set<Suit>();
-  for (const req of target.requirements) {
-    if (req.filledBy) continue;
-    if ((req.kind === "suit-set" || req.kind === "suit-run") && req.suit) {
-      neededSuits.add(req.suit);
-    }
-  }
-  for (const suit of SUITS) {
-    if (neededSuits.has(suit)) suitTypes(suit).forEach((t) => ok(t) && pool.push(t));
-  }
-
-  // Dragon focus: when a dragon set is unfilled, emphasise a single colour so a
-  // pair/pung is realistically reachable.
-  if (targetNeedsDragon(target) && ok("dragon-red")) {
-    const focus = pickFocusDragon(board ?? [], state);
-    state = focus.rngState;
-    const focusType = `dragon-${focus.color}` as TileTypeId;
-    pool.push(focusType, focusType, focusType); // total 4 of the focus colour
-  }
-
-  // Board reinforcement: help finish what the player already holds.
-  if (board) {
-    const { numbers, dragons } = looseTally(board);
-    for (const [type, count] of numbers) {
-      if (!ok(type)) continue;
-      if (count >= 1) pool.push(type); // a second copy → pair
-      if (count >= 2) pool.push(type); // a third copy → pung
-    }
-    for (const [color, count] of dragons) {
-      const t = `dragon-${color}` as TileTypeId;
-      if (count >= 1 && ok(t)) pool.push(t);
-    }
-  }
-
-  if (pool.length === 0) {
-    // Degenerate allowed-set; never return an empty bag.
-    for (const t of NUMBER_TYPES) if (ok(t)) pool.push(t);
-    if (pool.length === 0) pool.push("dot-1");
-  }
-
-  const { result, state: shuffled } = shuffle(pool, state);
-  return { bag: result, rngState: shuffled };
-}
-
-/**
- * Probability that a spawn is a "reinforcement" — a tile chosen to combine with
- * something already on the board — rather than a plain fair-bag draw. With 13
- * distinct tile types on a 16-cell board, purely random spawns pile up as
- * un-combinable junk; reinforcement keeps the board flowing so the player can
- * actually assemble a four-set hand. The remaining fraction stays fair-bag
- * random to preserve variety and tension.
+ * The reinforcement chance rises with board fullness. Under the spawn-every-
+ * swipe model a congested board urgently needs combinable tiles to drain back
+ * down, so a near-full board reinforces almost every time.
  */
 export const REINFORCE_P = 0.7;
-
-/**
- * Under the spawn-every-swipe model the board fills from play, so the fuller it
- * is the more the next spawn should be something the player can immediately
- * combine (draining the board) rather than fresh clutter. The effective
- * reinforcement chance is REINFORCE_P + fullness·REINFORCE_P_CONGESTION, capped
- * at REINFORCE_P_MAX — a near-full board reinforces almost every time.
- */
 export const REINFORCE_P_CONGESTION = 0.28;
 export const REINFORCE_P_MAX = 0.95;
 
 /**
- * Flat per-spawn chance of a Joker, on top of the (rare) bag joker. Tuned so a
- * typical game sees one or two jokers — enough that the taught wild mechanic is
- * real, still rare enough to feel special.
- */
-export const JOKER_SPAWN_P = 0.025;
-
-/**
  * Pick a tile type that would help the player right now: complete a pung from an
- * existing pair, fill a 1-2-3 run gap, or pair up a lone tile. Target-relevant
- * options are weighted higher. Returns null when nothing on the board can be
- * reinforced (→ fall back to a fair-bag draw).
+ * existing pair, fill a 1-2-3 run gap, or pair up a lone tile. Restricted to
+ * `available` types (the tiles the wall still holds) so reinforcement never
+ * promises a tile the finite wall can't deliver. Returns null when nothing on
+ * the board can be usefully reinforced (→ fall back to a fair draw).
  */
 export function helpfulSpawn(
   board: Board,
@@ -210,6 +108,7 @@ export function helpfulSpawn(
   rngState: number,
   avoid?: TileTypeId,
   allowed?: ReadonlySet<TileTypeId>,
+  available?: ReadonlySet<TileTypeId>,
 ): { type: TileTypeId | null; rngState: number } {
   const relevant = relevantTypes(target);
   const { numbers, dragons } = looseTally(board);
@@ -219,6 +118,7 @@ export function helpfulSpawn(
   const push = (type: TileTypeId, base: number) => {
     if (type === avoid) return; // diversify: don't reinforce the just-spawned type
     if (allowed && !allowed.has(type)) return;
+    if (available && !available.has(type)) return; // not in the wall any more
     cands.push({ type, weight: base * (relevant.has(type) ? 1.6 : 1) });
   };
 
@@ -226,7 +126,8 @@ export function helpfulSpawn(
   // partial (1·2 needs the 3, 2·3 needs the 1).
   for (const t of board) {
     if (!t || t.state !== "completed") continue;
-    if (t.setKind === "pair") {
+    if (t.setKind === "pair" || t.setKind === "pung" || t.setKind === "kong") {
+      // pair→pung, and (advanced) pung→kong, kong→quint all want another copy.
       if (t.suit && t.rank) push(`${t.suit}-${t.rank}` as TileTypeId, 7);
       else if (t.dragon) push(`dragon-${t.dragon}` as TileTypeId, 7);
     } else if (isPartialRun(t) && t.suit) {
@@ -244,9 +145,9 @@ export function helpfulSpawn(
     if (has1 && has3 && !has2) push(`${suit}-2` as TileTypeId, 6);
   }
 
-  // Pair up a lone tile (count 1), or edge toward a pung (count 2+). Crucially a
-  // held-duplicate is weighted LOWER than a lone tile, not higher — over-feeding
-  // a type the board already has two of just floods the board with one tile.
+  // Pair up a lone tile (count 1), or edge toward a pung (count 2+). A held
+  // duplicate is weighted LOWER than a lone tile so a type the board already
+  // holds two of doesn't flood.
   for (const [type, count] of numbers) {
     if (count === 1) push(type, 3);
     else if (count >= 2) push(type, 2);
@@ -268,70 +169,90 @@ export function helpfulSpawn(
   return { type: cands[cands.length - 1].type, rngState: r.state };
 }
 
-export type SpawnState = {
-  bag: TileTypeId[];
+export type WallDraw = {
+  type: TileTypeId;
+  wall: TileTypeId[];
   rngState: number;
   recentSpawns: TileTypeId[];
 };
 
-export type SpawnResult = SpawnState & { type: TileTypeId };
-
 /**
- * Draw the next tile type, applying anti-repeat and anti-starvation guards.
+ * Draw the next tile from the finite wall. Returns null when the wall is empty
+ * and the config does not reshuffle — the signal that no tile can spawn.
  */
-export function drawTile(
-  state: SpawnState,
-  target: TargetPattern,
-  board?: Board,
-  allowed?: ReadonlySet<TileTypeId>,
-): SpawnResult {
-  let bag = state.bag.slice();
-  let rngState = state.rngState;
+export function drawFromWall(args: {
+  wall: TileTypeId[];
+  rngState: number;
+  recentSpawns: TileTypeId[];
+  board: Board;
+  target: TargetPattern;
+  cfg: TileInventoryConfig;
+  allowed?: ReadonlySet<TileTypeId>;
+  reinforceP: number;
+  forcedType?: TileTypeId | null;
+}): WallDraw | null {
+  let wall = args.wall.slice();
+  let rngState = args.rngState;
+  const { recentSpawns, board, target, cfg, allowed, reinforceP, forcedType } = args;
 
-  // Filter out disallowed leftovers (e.g. a bag primed before a learning
-  // restriction applied), then refill respecting the restriction.
-  if (allowed) bag = bag.filter((t) => allowed.has(t));
-  if (bag.length === 0) {
-    const refill = buildBag(target, rngState, board, allowed);
-    bag = refill.bag;
-    rngState = refill.rngState;
+  if (wall.length === 0) {
+    if (!cfg.reshuffleWhenEmpty) return null; // finite mode: the wall is spent
+    const rebuilt = buildWall(cfg, rngState, allowed);
+    wall = rebuilt.wall;
+    rngState = rebuilt.rngState;
+    if (wall.length === 0) return null;
   }
 
+  const available = new Set(wall);
+
+  const take = (index: number): WallDraw => {
+    const type = wall[index];
+    wall.splice(index, 1);
+    return { type, wall, rngState, recentSpawns: [...recentSpawns, type].slice(-8) };
+  };
+
+  // Solvability steer: draw a specific still-available copy straight away.
+  if (forcedType && available.has(forcedType)) {
+    return take(wall.indexOf(forcedType));
+  }
+
+  // Reinforcement: a helpful, still-available tile combines with the board.
+  const roll = nextRandom(rngState);
+  rngState = roll.state;
+  if (roll.value < reinforceP) {
+    const last = recentSpawns[recentSpawns.length - 1];
+    let trailing = 0;
+    for (let i = recentSpawns.length - 1; i >= 0 && recentSpawns[i] === last; i--) trailing++;
+    const avoid = trailing >= 2 ? last : undefined;
+    const h = helpfulSpawn(board, target, rngState, avoid, allowed, available);
+    rngState = h.rngState;
+    if (h.type && available.has(h.type)) return take(wall.indexOf(h.type));
+  }
+
+  // Fair draw from the front, with anti-repeat / anti-starvation reordering.
   const relevant = relevantTypes(target);
-  const recent = state.recentSpawns;
-
-  // Count trailing identical spawns.
-  const lastType = recent[recent.length - 1];
+  const last = recentSpawns[recentSpawns.length - 1];
   let trailingSame = 0;
-  for (let i = recent.length - 1; i >= 0 && recent[i] === lastType; i--) trailingSame++;
-
-  const recentWindow = recent.slice(-STARVATION_WINDOW);
+  for (let i = recentSpawns.length - 1; i >= 0 && recentSpawns[i] === last; i--) trailingSame++;
+  const recentWindow = recentSpawns.slice(-STARVATION_WINDOW);
   const starving =
-    recentWindow.length >= STARVATION_WINDOW &&
-    !recentWindow.some((t) => relevant.has(t));
+    recentWindow.length >= STARVATION_WINDOW && !recentWindow.some((t) => relevant.has(t));
 
-  // Choose an index in the bag to draw. Default: front.
   let drawIndex = 0;
-  const front = bag[0];
-
-  const wouldRepeat = front === lastType && trailingSame >= MAX_CONSECUTIVE_SAME;
+  const front = wall[0];
+  const wouldRepeat = front === last && trailingSame >= MAX_CONSECUTIVE_SAME;
   const wouldStarve = starving && !relevant.has(front);
-
   if (wouldRepeat || wouldStarve) {
-    const better = bag.findIndex((t, i) => {
+    const better = wall.findIndex((t, i) => {
       if (i === 0) return false;
       if (wouldStarve && !relevant.has(t)) return false;
-      if (wouldRepeat && t === lastType) return false;
+      if (wouldRepeat && t === last) return false;
       return true;
     });
     if (better !== -1) drawIndex = better;
   }
 
-  const type = bag[drawIndex];
-  bag.splice(drawIndex, 1);
-
-  const recentSpawns = [...recent, type].slice(-8);
-  return { type, bag, rngState, recentSpawns };
+  return take(drawIndex);
 }
 
 /** Pick a random empty cell index using the deterministic RNG. */

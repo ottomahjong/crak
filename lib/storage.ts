@@ -1,5 +1,6 @@
-import type { GameState, Settings, Stats } from "@/types";
+import type { GameState, Settings, Stats, TileTypeId } from "@/types";
 import { CONFIG } from "@/game/config";
+import { buildWall, PRIMARY_WALL, LEARNING_WALL } from "@/game/inventory";
 
 // ---------------------------------------------------------------------------
 // Versioned local storage. No accounts, no backend — everything lives on the
@@ -90,14 +91,36 @@ function validActive(g: unknown): g is GameState {
  * in (granting a fresh set of undos) rather than discarding the game.
  */
 function migrateActive(g: GameState): GameState {
-  const legacy = g as GameState & { undoAvailable?: boolean; undoSnapshot?: unknown };
+  const legacy = g as GameState & {
+    undoAvailable?: boolean;
+    undoSnapshot?: unknown;
+    bag?: TileTypeId[];
+    movesSinceSpawn?: number;
+  };
+  // Finite-wall migration: saves that predate the wall carried an infinite
+  // "bag". Rebuild a proper finite wall (seeded from the saved RNG) so an old
+  // game continues under the new inventory rules rather than being discarded.
+  let wall = g.wall;
+  let wallStart = g.wallStart;
+  if (!Array.isArray(wall)) {
+    const cfg = g.learning ? LEARNING_WALL : PRIMARY_WALL;
+    const built = buildWall(cfg, (g.rngState >>> 0) || 1);
+    wall = built.wall;
+    wallStart = built.wall.length;
+  } else if (typeof wallStart !== "number") {
+    wallStart = wall.length;
+  }
   return {
     ...g,
+    wall,
+    wallStart,
     undosRemaining: typeof g.undosRemaining === "number" ? g.undosRemaining : CONFIG.UNDO_COUNT,
     undoStack: Array.isArray(g.undoStack) ? g.undoStack : [],
-    movesSinceSpawn: typeof g.movesSinceSpawn === "number" ? g.movesSinceSpawn : 0,
-    // drop legacy single-undo fields if present
+    idleSwipes: typeof g.idleSwipes === "number" ? g.idleSwipes : 0,
+    // drop legacy fields if present
     ...(legacy.undoAvailable !== undefined ? { undoAvailable: undefined } : {}),
+    ...(legacy.bag !== undefined ? { bag: undefined } : {}),
+    ...(legacy.movesSinceSpawn !== undefined ? { movesSinceSpawn: undefined } : {}),
   } as GameState;
 }
 

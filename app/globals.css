@@ -185,8 +185,29 @@ a:focus-visible {
 /* Top bar + stats                                                     */
 /* ------------------------------------------------------------------ */
 .game-screen { gap: 10px; }
-.topbar { display: flex; align-items: center; gap: 12px; }
+.topbar { display: flex; flex-direction: column; gap: 8px; }
+.topbar__row { display: flex; align-items: center; gap: 12px; }
 .topbar__stats { display: flex; gap: 14px; margin-left: auto; }
+
+/* Finite-wall meter: the tiles remaining to be drawn. Central to the game's
+   identity — you are racing a knowable, exhaustible wall. */
+.wall-meter { display: flex; align-items: center; gap: 8px; }
+.wall-meter__track {
+  flex: 1; height: 6px; border-radius: 3px;
+  background: color-mix(in srgb, var(--ink, #222) 18%, transparent);
+  overflow: hidden;
+}
+.wall-meter__fill {
+  height: 100%; border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent) 0%, var(--gold, var(--accent)) 100%);
+  transition: width 200ms ease;
+}
+.wall-meter__label {
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.4px;
+  color: var(--text-dim); white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.wall-meter--low .wall-meter__fill { background: var(--dragon-red, #c0392b); }
+.wall-meter--low .wall-meter__label { color: var(--dragon-red, #c0392b); }
 .stat { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.1; }
 .stat__label { font-size: 0.62rem; letter-spacing: 1.5px; color: var(--text-dim); }
 .stat__value { font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; }

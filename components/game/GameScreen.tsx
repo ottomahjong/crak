@@ -59,6 +59,9 @@ export function GameScreen({ g, onPause, onExit, onOpenStats }: Props) {
         round={game.round}
         multiplier={game.multiplier}
         onPause={onPause}
+        wallRemaining={game.wall.length}
+        wallTotal={game.wallStart}
+        showWall={!learning}
       />
 
       <TargetHand target={game.target} learning={learning} onExplainOpen={g.noteHelpOpened} />

@@ -19,23 +19,16 @@ import { learningPool, ruleOptsFor } from "@/game/rules/options";
 // ---------------------------------------------------------------------------
 //
 // evaluateHandSolvability answers ONE question: can this target hand still be
-// completed from where the game is now? It is used in two places:
+// completed from where the game is now, given the FINITE wall still to be drawn?
+// It runs (a) before a target is presented — a hand that cannot be built from
+// the board plus the remaining wall is never dealt — and (b) before every spawn
+// — if a required tile is scarce, the draw is steered to supply it while the
+// wall still can.
 //
-//   • before a target is presented — a hand that cannot be built (a required
-//     tile family is locked out, or Kongs aren't unlocked) is never dealt;
-//   • before every spawn — if a required tile is starving, the fair-bag
-//     generator is steered to supply it, so a run never dies of bad luck.
-//
-// The check is deliberately conservative and DETERMINISTIC (no randomness). It
-// separates HARD feasibility (is a recipe possible at all, given the allowed
-// tile pool and whether Kongs are unlocked?) from SOFT confidence (how close is
-// the board, and does the near-term supply cover what's still needed?).
-//
-// The dominating fact about CRAK!'s supply is that the generator reinforces the
-// board: given empty cells to spawn into, any ALLOWED tile can still arrive.
-// So a requirement is hard-infeasible only when its whole tile family is
-// disallowed (learning restriction) or it needs a Kong/Quint before those are
-// unlocked — or when the board is a terminal dead end with no room to build.
+// Supply is now genuinely finite, so the check accounts for it exactly: a tile
+// is "reachable" only if enough copies sit on the board or remain in the wall
+// (the futureBag). A requirement whose tiles are exhausted is infeasible — this
+// is the finite wall's fairness endgame, and how the game knows it is lost.
 
 const NUMBER_TYPES: TileTypeId[] = [
   "dot-1", "dot-2", "dot-3",
@@ -43,219 +36,306 @@ const NUMBER_TYPES: TileTypeId[] = [
   "crak-1", "crak-2", "crak-3",
 ];
 
-/** How many identical tiles a same-tile set needs. */
 const SAME_TILE_COUNT: Record<string, number> = { pair: 2, pung: 3, kong: 4, quint: 5 };
 
-type Ctx = {
-  /** Effective copies of each number tile: loose tiles + tiles locked inside
-   *  unassigned number sets of that identity (a pung of dot-2 = 3 copies). */
-  numberHeld: Map<TileTypeId, number>;
-  /** Effective copies of each dragon colour, same accounting. */
-  dragonHeld: Map<DragonColor, number>;
-  /** Ranks already present per suit (loose, partial or completed) — for runs. */
+type Counts = {
+  num: Map<TileTypeId, number>;
+  dragon: Map<DragonColor, number>;
   suitRanks: Map<Suit, Set<Rank>>;
   jokers: number;
+};
+
+type Ctx = {
+  board: Counts; // tiles physically on the board (loose + locked in sets)
+  reach: Counts; // board + futureBag — everything still obtainable
   allowed?: ReadonlySet<TileTypeId>;
   kongsEnabled: boolean;
 };
+
+function emptyCounts(): Counts {
+  const suitRanks = new Map<Suit, Set<Rank>>();
+  for (const s of SUITS) suitRanks.set(s, new Set());
+  return { num: new Map(), dragon: new Map(), suitRanks, jokers: 0 };
+}
+
+function addNumber(c: Counts, suit: Suit, rank: Rank, n: number) {
+  const key = `${suit}-${rank}` as TileTypeId;
+  c.num.set(key, (c.num.get(key) ?? 0) + n);
+  c.suitRanks.get(suit)!.add(rank);
+}
+
+/** Copies a completed same-tile set contributes toward its identity. */
+function setContribution(setKind?: string): number {
+  return SAME_TILE_COUNT[setKind ?? ""] ?? 0;
+}
+
+function tallyBoard(board: Board, c: Counts) {
+  for (const t of board) {
+    if (!t) continue;
+    if (t.state === "loose") {
+      if (t.isJoker) c.jokers++;
+      else if (t.dragon) c.dragon.set(t.dragon, (c.dragon.get(t.dragon) ?? 0) + 1);
+      else if (t.suit && t.rank) addNumber(c, t.suit, t.rank, 1);
+      continue;
+    }
+    const n = setContribution(t.setKind);
+    if (t.setKind === "partial" && t.suit && t.partRanks) {
+      for (const r of t.partRanks) addNumber(c, t.suit, r, 1);
+    } else if (t.setKind === "run" && t.suit) {
+      for (const r of [1, 2, 3] as Rank[]) addNumber(c, t.suit, r, 1);
+    } else if (t.suit && t.rank) {
+      addNumber(c, t.suit, t.rank, n);
+    } else if (t.dragon) {
+      c.dragon.set(t.dragon, (c.dragon.get(t.dragon) ?? 0) + n);
+    }
+  }
+}
+
+function tallyBag(bag: TileDefinition[], c: Counts) {
+  for (const type of bag) {
+    if (type === "joker") c.jokers++;
+    else if (type.startsWith("dragon-")) {
+      const d = type.split("-")[1] as DragonColor;
+      c.dragon.set(d, (c.dragon.get(d) ?? 0) + 1);
+    } else {
+      const [suit, rankStr] = type.split("-");
+      addNumber(c, suit as Suit, Number(rankStr) as Rank, 1);
+    }
+  }
+}
+
+function buildCtx(board: Board, futureBag: TileDefinition[], gs: GameState): Ctx {
+  const boardC = emptyCounts();
+  tallyBoard(board, boardC);
+  // reach = board + future.
+  const reach = emptyCounts();
+  tallyBoard(board, reach);
+  tallyBag(futureBag, reach);
+  return {
+    board: boardC,
+    reach,
+    allowed: learningPool(gs.learning),
+    kongsEnabled: ruleOptsFor(gs).kongs === true,
+  };
+}
 
 function ok(ctx: Ctx, t: TileTypeId): boolean {
   return !ctx.allowed || ctx.allowed.has(t);
 }
 
-/** Effective copies a tile contributes toward a matching set (loose = 1, a
- *  completed same-tile set contributes its full count so we can extend it). */
-function tileContribution(state: string, setKind?: string): number {
-  if (state === "loose") return 1;
-  return SAME_TILE_COUNT[setKind ?? ""] ?? 0;
-}
-
-/** Build the accounting context from a board plus the tiles still to arrive. */
-function buildCtx(board: Board, futureBag: TileDefinition[], gs: GameState): Ctx {
-  const numberHeld = new Map<TileTypeId, number>();
-  const dragonHeld = new Map<DragonColor, number>();
-  const suitRanks = new Map<Suit, Set<Rank>>();
-  for (const s of SUITS) suitRanks.set(s, new Set());
-  let jokers = 0;
-
-  const addNumber = (suit: Suit, rank: Rank, n: number) => {
-    const key = `${suit}-${rank}` as TileTypeId;
-    numberHeld.set(key, (numberHeld.get(key) ?? 0) + n);
-    suitRanks.get(suit)!.add(rank);
-  };
-
-  for (const t of board) {
-    if (!t) continue;
-    if (t.state === "loose") {
-      if (t.isJoker) jokers++;
-      else if (t.dragon) dragonHeld.set(t.dragon, (dragonHeld.get(t.dragon) ?? 0) + 1);
-      else if (t.suit && t.rank) addNumber(t.suit, t.rank, 1);
-      continue;
-    }
-    // Completed / partial sets: count their locked tiles toward the identity.
-    const n = tileContribution(t.state, t.setKind);
-    if (t.setKind === "partial" && t.suit && t.partRanks) {
-      for (const r of t.partRanks) addNumber(t.suit, r, 1);
-    } else if (t.setKind === "run" && t.suit) {
-      for (const r of [1, 2, 3] as Rank[]) addNumber(t.suit, r, 1);
-    } else if (t.suit && t.rank) {
-      addNumber(t.suit, t.rank, n);
-    } else if (t.dragon) {
-      dragonHeld.set(t.dragon, (dragonHeld.get(t.dragon) ?? 0) + n);
-    }
-  }
-
-  // Near-term supply from the bag counts toward what's reachable.
-  for (const type of futureBag) {
-    if (type === "joker") jokers++;
-    else if (type.startsWith("dragon-")) {
-      const c = type.split("-")[1] as DragonColor;
-      dragonHeld.set(c, (dragonHeld.get(c) ?? 0) + 1);
-    } else {
-      const [suit, rankStr] = type.split("-");
-      addNumber(suit as Suit, Number(rankStr) as Rank, 1);
-    }
-  }
-
-  const opts = ruleOptsFor(gs);
-  return {
-    numberHeld,
-    dragonHeld,
-    suitRanks,
-    jokers,
-    allowed: learningPool(gs.learning),
-    kongsEnabled: opts.kongs === true,
-  };
-}
-
 type ReqEval = {
   feasible: boolean;
-  /** Real tiles still needed for the cheapest recipe, by type. */
+  /** Tiles still to be DRAWN (not yet on the board) for the cheapest recipe. */
   need: Map<TileTypeId, number>;
-  /** Concrete progress 0..1 toward the cheapest recipe (for confidence). */
+  /** Concrete progress 0..1 from what is already on the board. */
   progress: number;
   reason?: string;
 };
 
-/** Best same-tile number set (pung/kong/quint) progress across all identities. */
-function bestNumberSet(ctx: Ctx, count: number): ReqEval {
+const infeasible = (reason: string): ReqEval => ({
+  feasible: false,
+  need: new Map(),
+  progress: 0,
+  reason,
+});
+
+/** A same-tile set (pair/pung/kong/quint) of a NUMBER, optionally one suit. */
+function numberSameTile(ctx: Ctx, count: number, suit?: Suit): ReqEval {
+  const types = (suit ? [1, 2, 3].map((r) => `${suit}-${r}`) : NUMBER_TYPES) as TileTypeId[];
   let best: ReqEval | null = null;
-  const numbers = NUMBER_TYPES.filter((t) => ok(ctx, t));
-  if (numbers.length === 0) {
-    return { feasible: false, need: new Map(), progress: 0, reason: "No number tiles available" };
-  }
-  for (const type of numbers) {
-    const held = ctx.numberHeld.get(type) ?? 0;
-    const missing = Math.max(0, count - held);
-    // Jokers can fill all but the first two real tiles (a pair must be real).
-    const realFloor = Math.min(count, 2);
-    const realNeeded = Math.max(0, realFloor - held);
+  let anyAllowed = false;
+  for (const type of types) {
+    if (!ok(ctx, type)) continue;
+    anyAllowed = true;
+    const reach = ctx.reach.num.get(type) ?? 0;
+    const realMin = Math.min(2, count); // a set needs at least this many real copies
+    // Feasible if enough real copies are reachable and jokers can cover the rest.
+    const feasible = reach >= realMin && reach + ctx.reach.jokers >= count;
+    if (!feasible) continue;
+    const held = ctx.board.num.get(type) ?? 0;
     const need = new Map<TileTypeId, number>();
+    const missing = Math.max(0, count - held);
     if (missing > 0) need.set(type, missing);
-    const progress = Math.min(1, held / count);
-    const cand: ReqEval = { feasible: realNeeded <= Math.max(0, count - held) + ctx.jokers, need, progress };
+    const cand: ReqEval = { feasible: true, need, progress: Math.min(1, held / count) };
     if (!best || cand.progress > best.progress) best = cand;
   }
-  return best!;
+  if (best) return best;
+  return infeasible(anyAllowed ? "not enough copies remain" : "tile family unavailable");
 }
 
-/** Best run progress across suits (or a specific suit). */
-function bestRun(ctx: Ctx, suit?: Suit): ReqEval {
+/** A run (1·2·3) in some suit, optionally a specific suit. */
+function run(ctx: Ctx, suit?: Suit): ReqEval {
   const suits = suit ? [suit] : SUITS;
   let best: ReqEval | null = null;
+  let anyAllowed = false;
   for (const s of suits) {
-    if (![1, 2, 3].some((r) => ok(ctx, `${s}-${r}` as TileTypeId))) continue;
-    const have = ctx.suitRanks.get(s) ?? new Set<Rank>();
-    const missing = ([1, 2, 3] as Rank[]).filter((r) => !have.has(r));
+    const ranks = [1, 2, 3] as Rank[];
+    if (!ranks.some((r) => ok(ctx, `${s}-${r}` as TileTypeId))) continue;
+    anyAllowed = true;
+    const reachRanks = ctx.reach.suitRanks.get(s) ?? new Set<Rank>();
+    const missingReach = ranks.filter((r) => !reachRanks.has(r));
+    // A run needs 2 real adjacent ranks + the third (real or one joker). So at
+    // most one rank may be missing from the reachable supply, and only if a
+    // joker can stand in for it.
+    const feasible = missingReach.length === 0 || (missingReach.length === 1 && ctx.reach.jokers >= 1);
+    if (!feasible) continue;
+    const boardRanks = ctx.board.suitRanks.get(s) ?? new Set<Rank>();
+    const missingBoard = ranks.filter((r) => !boardRanks.has(r));
     const need = new Map<TileTypeId, number>();
-    for (const r of missing) need.set(`${s}-${r}` as TileTypeId, 1);
-    const progress = (3 - missing.length) / 3;
-    // A joker can substitute at most one missing rank.
-    const feasible = missing.length - (ctx.jokers > 0 ? 1 : 0) <= missing.length;
-    const cand: ReqEval = { feasible, need, progress };
+    for (const r of missingBoard) need.set(`${s}-${r}` as TileTypeId, 1);
+    const cand: ReqEval = { feasible: true, need, progress: (3 - missingBoard.length) / 3 };
     if (!best || cand.progress > best.progress) best = cand;
   }
-  if (!best) return { feasible: false, need: new Map(), progress: 0, reason: `No ${suit ?? ""} run possible` };
-  return best;
+  if (best) return best;
+  return infeasible(anyAllowed ? "run cannot be completed" : `no ${suit ?? ""} tiles`);
 }
 
-/** Best dragon set (pair suffices) across colours. */
-function bestDragonSet(ctx: Ctx): ReqEval {
+/** A dragon set (a pair suffices) in some colour. */
+function dragonSet(ctx: Ctx): ReqEval {
   const colors = DRAGONS.filter((c) => ok(ctx, `dragon-${c}` as TileTypeId));
-  if (colors.length === 0) {
-    return { feasible: false, need: new Map(), progress: 0, reason: "No dragon tiles available" };
-  }
+  if (colors.length === 0) return infeasible("no dragon tiles");
   let best: ReqEval | null = null;
   for (const c of colors) {
-    const held = ctx.dragonHeld.get(c) ?? 0;
-    const missing = Math.max(0, 2 - held);
+    const reach = ctx.reach.dragon.get(c) ?? 0;
+    if (reach < 2) continue; // a pair needs two real dragons; jokers can't start it
+    const held = ctx.board.dragon.get(c) ?? 0;
     const need = new Map<TileTypeId, number>();
+    const missing = Math.max(0, 2 - held);
     if (missing > 0) need.set(`dragon-${c}` as TileTypeId, missing);
-    const progress = Math.min(1, held / 2);
-    const cand: ReqEval = { feasible: true, need, progress };
+    const cand: ReqEval = { feasible: true, need, progress: Math.min(1, held / 2) };
     if (!best || cand.progress > best.progress) best = cand;
   }
-  return best!;
+  return best ?? infeasible("not enough dragons remain");
 }
 
-/** Best any-set: a pung (3 same) or a run, whichever is closer. */
-function bestAnySet(ctx: Ctx): ReqEval {
-  const pung = bestNumberSet(ctx, 3);
-  const run = bestRun(ctx);
-  const dragon = bestDragonSet(ctx); // a dragon pung also counts as any-set? No — any-set = pung/run of a number. Keep number-only.
-  void dragon;
-  return run.progress > pung.progress && run.feasible ? run : pung;
+function anySet(ctx: Ctx): ReqEval {
+  const pung = numberSameTile(ctx, 3);
+  const r = run(ctx);
+  if (pung.feasible && r.feasible) return r.progress > pung.progress ? r : pung;
+  return pung.feasible ? pung : r;
 }
 
-/** Evaluate one unfilled requirement. */
 function evalRequirement(req: TargetRequirement, ctx: Ctx): ReqEval {
   switch (req.kind) {
     case "any-pair":
-      return bestNumberSet(ctx, 2);
+      return numberSameTile(ctx, 2);
     case "number-pung":
-      return bestNumberSet(ctx, 3);
+      return numberSameTile(ctx, 3);
     case "number-kong":
-      return ctx.kongsEnabled
-        ? bestNumberSet(ctx, 4)
-        : { feasible: false, need: new Map(), progress: 0, reason: "Kongs are not unlocked yet" };
+      return ctx.kongsEnabled ? numberSameTile(ctx, 4) : infeasible("Kongs are not unlocked yet");
     case "number-quint":
-      return ctx.kongsEnabled
-        ? bestNumberSet(ctx, 5)
-        : { feasible: false, need: new Map(), progress: 0, reason: "Quints are not unlocked yet" };
+      return ctx.kongsEnabled ? numberSameTile(ctx, 5) : infeasible("Quints are not unlocked yet");
     case "suited-run":
-      return bestRun(ctx);
+      return run(ctx);
     case "suit-run":
-      return bestRun(ctx, req.suit);
+      return run(ctx, req.suit);
     case "dragon-set":
-      return bestDragonSet(ctx);
+      return dragonSet(ctx);
     case "suit-set": {
-      const pung = req.suit
-        ? bestNumberSetForSuit(ctx, req.suit, 3)
-        : bestNumberSet(ctx, 3);
-      const run = bestRun(ctx, req.suit);
-      return run.progress > pung.progress && run.feasible ? run : pung;
+      const pung = numberSameTile(ctx, 3, req.suit);
+      const r = run(ctx, req.suit);
+      if (pung.feasible && r.feasible) return r.progress > pung.progress ? r : pung;
+      return pung.feasible ? pung : r;
     }
     case "any-set":
-      return bestAnySet(ctx);
+      return anySet(ctx);
     default:
       return { feasible: true, need: new Map(), progress: 0 };
   }
 }
 
-/** Same-tile pung/kong restricted to one suit (for suit-set). */
-function bestNumberSetForSuit(ctx: Ctx, suit: Suit, count: number): ReqEval {
-  let best: ReqEval | null = null;
-  for (const r of [1, 2, 3] as Rank[]) {
-    const type = `${suit}-${r}` as TileTypeId;
-    if (!ok(ctx, type)) continue;
-    const held = ctx.numberHeld.get(type) ?? 0;
-    const missing = Math.max(0, count - held);
-    const need = new Map<TileTypeId, number>();
-    if (missing > 0) need.set(type, missing);
-    const cand: ReqEval = { feasible: true, need, progress: Math.min(1, held / count) };
-    if (!best || cand.progress > best.progress) best = cand;
+// ---------------------------------------------------------------------------
+// Shared-supply feasibility: can EVERY unfilled requirement be satisfied at
+// once from the finite pool? With a finite wall the requirements compete for
+// the same tiles, so independent per-requirement checks aren't enough — we need
+// a disjoint assignment. Sizes are tiny (≤4 requirements), so a bounded
+// backtracking search over concrete recipes is exact and fast.
+// ---------------------------------------------------------------------------
+
+type Recipe = { tiles: Array<[TileTypeId, number]>; jokers: number };
+
+/** Same-tile set recipes (real copies, optionally jokers for the surplus). */
+function sameTileRecipes(types: TileTypeId[], count: number): Recipe[] {
+  const out: Recipe[] = [];
+  for (const t of types) {
+    for (let j = 0; j <= count - 2; j++) out.push({ tiles: [[t, count - j]], jokers: j });
   }
-  return best ?? { feasible: false, need: new Map(), progress: 0, reason: `No ${suit} tiles available` };
+  return out;
+}
+
+/** Run recipes for a suit: three reals, or two adjacent reals + one joker. */
+function runRecipesForSuit(s: Suit): Recipe[] {
+  const r = (n: number) => `${s}-${n}` as TileTypeId;
+  return [
+    { tiles: [[r(1), 1], [r(2), 1], [r(3), 1]], jokers: 0 },
+    { tiles: [[r(1), 1], [r(2), 1]], jokers: 1 },
+    { tiles: [[r(2), 1], [r(3), 1]], jokers: 1 },
+  ];
+}
+
+function recipesFor(req: TargetRequirement, ctx: Ctx): Recipe[] {
+  const nums = NUMBER_TYPES.filter((t) => ok(ctx, t));
+  const suitNums = (s: Suit) => ([1, 2, 3].map((n) => `${s}-${n}`) as TileTypeId[]).filter((t) => ok(ctx, t));
+  const runs = (s?: Suit) => (s ? [s] : SUITS).filter((x) => ok(ctx, `${x}-1` as TileTypeId)).flatMap(runRecipesForSuit);
+  const dragons = DRAGONS.filter((d) => ok(ctx, `dragon-${d}` as TileTypeId)).map(
+    (d): Recipe => ({ tiles: [[`dragon-${d}` as TileTypeId, 2]], jokers: 0 }),
+  );
+  switch (req.kind) {
+    case "any-pair":
+      return sameTileRecipes(nums, 2);
+    case "number-pung":
+      return sameTileRecipes(nums, 3);
+    case "number-kong":
+      return ctx.kongsEnabled ? sameTileRecipes(nums, 4) : [];
+    case "number-quint":
+      return ctx.kongsEnabled ? sameTileRecipes(nums, 5) : [];
+    case "suited-run":
+      return runs();
+    case "suit-run":
+      return req.suit ? runs(req.suit) : runs();
+    case "dragon-set":
+      return dragons;
+    case "suit-set":
+      return req.suit ? [...sameTileRecipes(suitNums(req.suit), 3), ...runs(req.suit)] : sameTileRecipes(nums, 3);
+    case "any-set":
+      return [...sameTileRecipes(nums, 3), ...runs()];
+    default:
+      return [{ tiles: [], jokers: 0 }];
+  }
+}
+
+/** The finite pool of real tiles + jokers still obtainable (board + wall). */
+function poolFromReach(ctx: Ctx): { tiles: Map<TileTypeId, number>; jokers: number } {
+  const tiles = new Map<TileTypeId, number>(ctx.reach.num);
+  for (const [color, n] of ctx.reach.dragon) tiles.set(`dragon-${color}` as TileTypeId, n);
+  return { tiles, jokers: ctx.reach.jokers };
+}
+
+/** Can all requirements be satisfied at once from the shared finite pool? */
+function canAssignAll(reqs: TargetRequirement[], ctx: Ctx): boolean {
+  const pool = poolFromReach(ctx);
+  const options = reqs
+    .map((r) => recipesFor(r, ctx))
+    .sort((a, b) => a.length - b.length); // most-constrained first
+
+  const fits = (rec: Recipe) =>
+    pool.jokers >= rec.jokers && rec.tiles.every(([t, n]) => (pool.tiles.get(t) ?? 0) >= n);
+  const apply = (rec: Recipe, sign: 1 | -1) => {
+    pool.jokers -= sign * rec.jokers;
+    for (const [t, n] of rec.tiles) pool.tiles.set(t, (pool.tiles.get(t) ?? 0) - sign * n);
+  };
+
+  const solve = (i: number): boolean => {
+    if (i === options.length) return true;
+    for (const rec of options[i]) {
+      if (!fits(rec)) continue;
+      apply(rec, 1);
+      if (solve(i + 1)) return true;
+      apply(rec, -1);
+    }
+    return false;
+  };
+  return solve(0);
 }
 
 function emptyCellCount(board: Board): number {
@@ -266,7 +346,7 @@ function emptyCellCount(board: Board): number {
 
 /**
  * Verify a target hand is still achievable from the current game state and the
- * tiles that can still arrive. Pure and deterministic.
+ * tiles remaining in the wall (futureBag). Pure and deterministic.
  */
 export function evaluateHandSolvability(
   gameState: GameState,
@@ -289,27 +369,30 @@ export function evaluateHandSolvability(
       missingRequirements.push(req.label);
       if (e.reason) blockingReasons.push(`${req.label}: ${e.reason}`);
     }
-    // Aggregate the max need per type (requirements don't literally share
-    // supply — the generator can produce each — so take the max, not the sum).
     for (const [type, n] of e.need) {
       requiredTileCounts[type] = Math.max(requiredTileCounts[type] ?? 0, n);
     }
   }
 
-  // Terminal dead-end: board full, no legal move, hand not complete.
+  // Shared-supply check: even when each requirement is individually reachable,
+  // the finite pool must satisfy them all at once (they compete for tiles).
+  let sharedSupplyOk = true;
+  if (missingRequirements.length === 0 && unfilled.length > 0) {
+    sharedSupplyOk = canAssignAll(unfilled, ctx);
+    if (!sharedSupplyOk) blockingReasons.push("Not enough tiles remain to complete every set");
+  }
+
   const empty = emptyCellCount(board);
   const deadlocked =
     empty === 0 && !hasAnyMove(board, ruleOptsFor(gameState)) && unfilled.length > 0;
   if (deadlocked) blockingReasons.push("Board is full with no legal move");
 
-  const solvable = missingRequirements.length === 0 && !deadlocked;
+  const solvable = missingRequirements.length === 0 && sharedSupplyOk && !deadlocked;
 
-  // Confidence: average concrete progress, discounted by board congestion and
-  // by how much still-needed supply the near-term bag actually covers.
   let confidence = unfilled.length === 0 ? 1 : progressSum / unfilled.length;
   const totalNeed = Object.values(requiredTileCounts).reduce((a, b) => a + b, 0);
   const roomRatio = Math.min(1, empty / Math.max(1, totalNeed));
-  confidence *= 0.5 + 0.5 * roomRatio; // congestion penalty
+  confidence *= 0.5 + 0.5 * roomRatio;
   if (empty <= 2 && totalNeed > empty) confidence *= 0.6;
   if (!solvable) confidence = 0;
   confidence = Math.max(0, Math.min(1, confidence));
@@ -318,18 +401,16 @@ export function evaluateHandSolvability(
 }
 
 /**
- * The single most valuable tile type to spawn right now to keep the target on
- * track: the still-needed type the board is most starved of. Returns null when
- * nothing is urgently needed. Used by the generator to steer the fair bag so a
- * required tile never starves. Deterministic.
+ * The single most valuable tile type to spawn now to keep the target on track:
+ * the still-needed type the board is most starved of, among tiles still in the
+ * wall. Returns null when nothing is urgently needed. Deterministic.
  */
 export function steerTypeForTarget(
   gameState: GameState,
   targetHand: TargetHand,
 ): TileTypeId | null {
-  // Look only at what is on the board (no future bag) so steering reacts to the
-  // live shortage, then bias a spawn toward filling it.
-  const ctx = buildCtx(gameState.board, [], gameState);
+  // Feasibility judged against the remaining wall; "need" stays board-relative.
+  const ctx = buildCtx(gameState.board, gameState.wall, gameState);
   const unfilled = targetHand.requirements.filter((r) => !r.filledBy);
 
   let bestType: TileTypeId | null = null;
@@ -338,8 +419,6 @@ export function steerTypeForTarget(
     const e = evalRequirement(req, ctx);
     if (!e.feasible) continue;
     for (const [type, n] of e.need) {
-      // Prefer the requirement closest to done (highest progress) and the tile
-      // it most needs — that is where one good spawn does the most good.
       const score = e.progress * 10 + n;
       if (score > bestScore) {
         bestScore = score;

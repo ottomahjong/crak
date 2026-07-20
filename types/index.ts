@@ -209,8 +209,10 @@ export type GameState = {
   status: GameStatus;
   /** Set while playing the four-hand learning game; undefined in endless mode. */
   learning?: LearningStage;
-  /** Fair-bag draw pool state. */
-  bag: TileTypeId[];
+  /** The finite tile wall: remaining tiles to be drawn, in draw order. */
+  wall: TileTypeId[];
+  /** Wall size at the start of the game (for the "tiles left" display). */
+  wallStart: number;
   /** Deterministic RNG state (mulberry32 seed). */
   rngState: number;
   /** Recent spawns, used to avoid runaway repeats. */
@@ -218,8 +220,9 @@ export type GameState = {
   /** Up to N free undos per game (see CONFIG.UNDO_COUNT). */
   undosRemaining: number;
   undoStack: GameSnapshot[];
-  /** Valid non-combining swipes since the last spawn (drives spawn cadence). */
-  movesSinceSpawn: number;
+  /** Consecutive valid swipes that made no set progress. Once the wall is
+   *  empty, a run of these ends the game (stalemate — no way forward). */
+  idleSwipes: number;
   elapsedMs: number;
   handsCompleted: number;
   setsCreated: number;
@@ -236,10 +239,10 @@ export type GameSnapshot = {
   target: TargetPattern;
   status: GameStatus;
   learning?: LearningStage;
-  bag: TileTypeId[];
+  wall: TileTypeId[];
   rngState: number;
   recentSpawns: TileTypeId[];
-  movesSinceSpawn: number;
+  idleSwipes: number;
   elapsedMs: number;
   handsCompleted: number;
   setsCreated: number;

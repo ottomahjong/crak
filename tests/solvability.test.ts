@@ -14,7 +14,7 @@ function stateWith(patch: Partial<GameState>): GameState {
 describe("evaluateHandSolvability", () => {
   it("an easy opener is solvable from a fresh board", () => {
     const s = createInitialState(42);
-    const r = evaluateHandSolvability(s, s.target, s.bag);
+    const r = evaluateHandSolvability(s, s.target, s.wall);
     expect(r.solvable).toBe(true);
     expect(r.missingRequirements).toHaveLength(0);
   });
@@ -22,7 +22,7 @@ describe("evaluateHandSolvability", () => {
   it("flags a Kong hand as unsolvable before Kongs unlock", () => {
     const target = instantiatePattern("KONGCALL"); // requires a number-kong
     const early = stateWith({ round: 1, learning: undefined, target });
-    const r = evaluateHandSolvability(early, target, early.bag);
+    const r = evaluateHandSolvability(early, target, early.wall);
     expect(r.solvable).toBe(false);
     expect(r.blockingReasons.some((b) => /Kong/i.test(b))).toBe(true);
   });
@@ -30,7 +30,7 @@ describe("evaluateHandSolvability", () => {
   it("accepts the same Kong hand once the advanced round is reached", () => {
     const target = instantiatePattern("KONGCALL");
     const late = stateWith({ round: 8, learning: undefined, target });
-    const r = evaluateHandSolvability(late, target, late.bag);
+    const r = evaluateHandSolvability(late, target, late.wall);
     expect(r.solvable).toBe(true);
   });
 
@@ -57,7 +57,9 @@ describe("evaluateHandSolvability", () => {
     const target = instantiatePattern("TWINS");
     const rec = reconcileTargets(target, board);
     const s = stateWith({ board: rec.board, target: rec.target, round: 3 });
-    const r = evaluateHandSolvability(s, rec.target, []);
+    // Judged against a full wall, the hand is buildable and still-needed tiles
+    // are reported.
+    const r = evaluateHandSolvability(s, rec.target, s.wall);
     expect(r.solvable).toBe(true);
     expect(Object.keys(r.requiredTileCounts).length).toBeGreaterThan(0);
   });
