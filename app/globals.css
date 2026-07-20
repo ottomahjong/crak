@@ -208,6 +208,30 @@ a:focus-visible {
 }
 .wall-meter--low .wall-meter__fill { background: var(--dragon-red, #c0392b); }
 .wall-meter--low .wall-meter__label { color: var(--dragon-red, #c0392b); }
+
+/* The rack: hands banked from this wall (spent tiles). A scrollable trophy row. */
+.rack { display: flex; align-items: center; gap: 8px; padding: 2px 2px; min-height: 40px; }
+.rack__count {
+  flex: none; font-weight: 800; font-size: 0.8rem; color: var(--gold, var(--accent));
+  font-variant-numeric: tabular-nums;
+}
+.rack__scroll {
+  display: flex; gap: 10px; overflow-x: auto; padding-bottom: 2px;
+  scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+.rack__scroll::-webkit-scrollbar { display: none; }
+.rack-hand {
+  display: flex; gap: 3px; flex: none; padding: 3px 6px;
+  border-radius: 9px; background: var(--tile-set-face, #f3e6c6);
+  box-shadow: var(--shadow-tile);
+}
+.rack-chip {
+  display: inline-flex; align-items: baseline; gap: 1px;
+  font-family: var(--font-display); font-weight: 800; line-height: 1;
+  font-size: 0.82rem; font-variant-numeric: tabular-nums;
+}
+.rack-chip__label { }
+.rack-chip__mark { font-size: 0.5rem; opacity: 0.85; }
 .stat { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.1; }
 .stat__label { font-size: 0.62rem; letter-spacing: 1.5px; color: var(--text-dim); }
 .stat__value { font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -451,7 +475,13 @@ a:focus-visible {
 .mahj-bonus { font-size: 2rem; font-weight: 800; font-variant-numeric: tabular-nums; }
 .overlay__note { color: var(--text-dim); font-size: 0.85rem; margin: 12px 0; }
 .overlay__actions { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
-.gameover-word { font-family: var(--font-display); font-size: 1.6rem; font-weight: 700; margin-bottom: 14px; }
+.gameover-word { font-family: var(--font-display); font-size: 1.35rem; font-weight: 700; margin-bottom: 6px; color: var(--text-dim); }
+.gameover-hands { display: flex; flex-direction: column; align-items: center; margin-bottom: 16px; }
+.gameover-hands__n {
+  font-family: var(--font-display); font-weight: 800; line-height: 1;
+  font-size: 3.4rem; color: var(--gold, var(--accent));
+}
+.gameover-hands__label { font-size: 0.85rem; font-weight: 700; color: var(--text-dim); letter-spacing: 0.4px; }
 
 .summary { margin: 0; }
 .summary--full { margin-top: 8px; }

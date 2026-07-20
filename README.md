@@ -66,12 +66,16 @@ into a pair (one cell).
 **Pung** — a pair plus one more matching loose tile becomes a pung. Dragon pairs
 become dragon pungs the same way. On easy/medium rounds a pung is terminal.
 
-**Kong & Quint (advanced)** — from `CONFIG.ADVANCED_ROUND` onward, the pung line
-extends two more steps: pung + matching tile → **Kong** (four of a kind), and
-kong + matching tile → **Quint** (five, terminal). Jokers extend them too.
-Kong/Quint target hands are only ever dealt once these are unlocked, so a
-kong‑requiring hand is never impossible to build. A bigger set also satisfies a
-smaller slot (a kong fills an `any‑set` or `number‑pung`).
+**Kong & Quint (optional, advanced)** — from `CONFIG.ADVANCED_ROUND` onward the
+pung line *can* extend two more steps: pung + matching tile → **Kong** (four of a
+kind), kong + matching tile → **Quint** (five, terminal); jokers extend them too.
+But these are **optional, not automatic upgrades**: a Pung stays a Pung unless
+the current hand actually asks for a Kong/Quint (`ruleOptsFor` enables the
+extension only when the target has an unfilled kong/quint requirement). So you
+never accidentally spend a fourth tile or a Joker upgrading a set the hand
+doesn't want — committing to a Kong is a deliberate choice with a strategic
+payoff. A bigger set still satisfies a smaller slot (a kong fills `any‑set` or
+`number‑pung`).
 
 **Run (two‑stage)** — every combination in CRAK! is a **two‑tile collision**, so
 runs work exactly like pair→pung: slide `1`+`2` (or `2`+`3`) of one suit together
@@ -243,11 +247,18 @@ the wall empties, no tile spawns; you play out the board. Randomness is a
 deterministic `mulberry32` state stored in the game, so a game is reproducible
 and undo can restore both the wall and the RNG.
 
-**The finite endgame.** A run ends when the wall is spent and the board can no
-longer progress: the current hand becomes unwinnable from what remains, the board
-jams with no legal move, or the player shuffles `STALEMATE_IDLE` swipes without
-any set progress (a wall‑game draw). Solvability (below) judges "unwinnable"
-exactly against the tiles left in the wall.
+**Banked hands go to the rack.** A completed hand's sets leave the board and land
+on the **rack** — a visible row of the hands you've banked from this wall. Those
+tiles are **spent**: they never return to circulation. The rack is both a trophy
+shelf and the real score of the game — CRAK! is about **how many hands you can
+build from one finite wall**, which the game‑over screen leads with.
+
+**The finite endgame.** A run ends when the wall can no longer produce a valid
+hand: at deal time no candidate pattern is buildable from the cashed board plus
+the remaining wall; or the wall is spent and the current hand becomes unwinnable,
+the board jams with no legal move, or the player shuffles `STALEMATE_IDLE` swipes
+without any set progress (a wall‑game draw). Solvability (below) judges
+"unwinnable" exactly against the tiles left in the wall.
 
 ---
 

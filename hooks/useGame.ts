@@ -369,11 +369,17 @@ export function useGame() {
     if (!prev || prev.status !== "won-hand") return;
     const result = completeHand(prev);
     const timed = flushTime(result.state);
-    persistGame(timed);
     setGame(timed);
-    setOverlay(null);
     setHandSummary(null);
     resetTransient();
+    // The wall may be spent after banking this hand — the run ends here.
+    if (timed.status === "game-over") {
+      setMessage("");
+      triggerGameOver(timed);
+      return;
+    }
+    persistGame(timed);
+    setOverlay(null);
     beginTiming();
     if (result.learningAdvance?.nextStage) {
       setLearningIntro(result.learningAdvance.nextStage);
@@ -383,7 +389,7 @@ export function useGame() {
     } else {
       setMessage(`+${result.bonus} • Round ${timed.round}`);
     }
-  }, [beginTiming, flushTime, persistGame, resetTransient]);
+  }, [beginTiming, flushTime, persistGame, resetTransient, triggerGameOver]);
 
   const dismissLearningIntro = useCallback(() => setLearningIntro(null), []);
 

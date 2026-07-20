@@ -5,6 +5,7 @@ import type {
   GameSnapshot,
   GameState,
   LearningStage,
+  RackHand,
   Suit,
   Tile,
   TargetPattern,
@@ -282,6 +283,7 @@ export function createInitialState(
     handsCompleted: 0,
     setsCreated: 0,
     suitCounts: { dot: 0, bam: 0, crak: 0 },
+    rack: [],
   };
 }
 
@@ -517,6 +519,16 @@ export function completeHand(state: GameState): HandCompletionResult {
   // scored sets leave the board, no set can ever be counted toward two hands.
   const cashedIds = new Set<string>();
   for (const r of state.target.requirements) if (r.filledBy) cashedIds.add(r.filledBy);
+  // Capture the banked sets for the rack (spent tiles, out of circulation).
+  const bankedTiles: Tile[] = state.board
+    .filter((t): t is Tile => !!t && cashedIds.has(t.id))
+    .map((t) => ({ ...t }));
+  const bankedHand: RackHand = {
+    id: `hand-${state.handsCompleted + 1}`,
+    name: state.target.name,
+    round: state.round,
+    tiles: bankedTiles,
+  };
   const board: Board = state.board.map((t) => (t && cashedIds.has(t.id) ? null : t));
 
   // Learning progression: each learning hand advances one stage; after the
@@ -527,6 +539,9 @@ export function completeHand(state: GameState): HandCompletionResult {
   let nextRound = state.round + 1;
   let pattern: TargetPattern;
   let rngAfterPick = state.rngState;
+  // Learning always deals its fixed next hand; endless must find one the wall
+  // can still build, or the run ends.
+  let wallCanDeal = !!state.learning;
 
   if (state.learning) {
     const completedStage = state.learning;
@@ -541,18 +556,23 @@ export function completeHand(state: GameState): HandCompletionResult {
       learningAdvance = { completedStage, nextStage: null };
     }
   } else {
-    // Fairness gate: verify the candidate hand is achievable from the cashed
-    // board + supply before presenting it; re-roll a few times if not.
+    // Fairness gate: find a candidate hand achievable from the cashed board +
+    // the tiles remaining in the wall. If NONE of several candidates can be
+    // built, the wall can no longer produce a valid hand — the run is over.
     let picked = pickPatternForRound(nextRound, state.target.id, state.rngState);
-    for (let attempt = 0; attempt < 4; attempt++) {
+    for (let attempt = 0; attempt < 6; attempt++) {
       const probe = reconcileTargets(picked.pattern, board);
       const probeState: GameState = {
         ...state,
         board: probe.board,
         round: nextRound,
         learning: undefined,
+        target: probe.target,
       };
-      if (evaluateHandSolvability(probeState, probe.target, state.wall).solvable) break;
+      if (evaluateHandSolvability(probeState, probe.target, state.wall).solvable) {
+        wallCanDeal = true;
+        break;
+      }
       picked = pickPatternForRound(nextRound, picked.pattern.id, picked.rngState);
     }
     pattern = picked.pattern;
@@ -605,9 +625,11 @@ export function completeHand(state: GameState): HandCompletionResult {
     rngState,
     recentSpawns,
     idleSwipes: 0,
+    rack: [...state.rack, bankedHand],
     // A new hand starts a fresh undo history (can't undo across a Mahj).
     undoStack: [],
-    status: "playing",
+    // If the wall can no longer build any hand, the run ends on this bank.
+    status: wallCanDeal ? "playing" : "game-over",
   };
 
   return {

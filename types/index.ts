@@ -169,6 +169,15 @@ export type SolvabilityResult = {
 
 export type GameStatus = "playing" | "won-hand" | "game-over";
 
+/** A hand banked onto the rack: its completed sets, spent and out of play. */
+export type RackHand = {
+  id: string;
+  name: string;
+  round: number;
+  /** The completed set tiles that fulfilled the hand. */
+  tiles: Tile[];
+};
+
 export type Stats = {
   gamesPlayed: number;
   bestScore: number;
@@ -228,6 +237,8 @@ export type GameState = {
   setsCreated: number;
   /** running tally of suit usage for "most-used suit". */
   suitCounts: Record<Suit, number>;
+  /** Hands banked from this wall — spent tiles shown on the rack. */
+  rack: RackHand[];
 };
 
 /** Minimal snapshot captured before a move to support a single undo. */

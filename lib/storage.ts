@@ -117,6 +117,7 @@ function migrateActive(g: GameState): GameState {
     undosRemaining: typeof g.undosRemaining === "number" ? g.undosRemaining : CONFIG.UNDO_COUNT,
     undoStack: Array.isArray(g.undoStack) ? g.undoStack : [],
     idleSwipes: typeof g.idleSwipes === "number" ? g.idleSwipes : 0,
+    rack: Array.isArray(g.rack) ? g.rack : [],
     // drop legacy fields if present
     ...(legacy.undoAvailable !== undefined ? { undoAvailable: undefined } : {}),
     ...(legacy.bag !== undefined ? { bag: undefined } : {}),

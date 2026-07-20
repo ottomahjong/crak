@@ -17,9 +17,12 @@ export function GameOverOverlay({ game, stats, onPlayAgain, onExit }: Props) {
   const [shared, setShared] = useState<string | null>(null);
   const topSuit = mostUsedSuit({ ...stats, suitCounts: game.suitCounts });
 
-  const shareText = `I scored ${game.score.toLocaleString()} and completed ${game.handsCompleted} hand${
-    game.handsCompleted === 1 ? "" : "s"
-  } in CRAK!`;
+  const hands = game.handsCompleted;
+  const plural = hands === 1 ? "" : "s";
+  const wallSpent = game.wall.length === 0;
+  const headline = wallSpent ? "Wall cleared" : "No moves left";
+
+  const shareText = `I completed ${hands} hand${plural} from one wall (${game.score.toLocaleString()} pts) in CRAK!`;
 
   const share = async () => {
     try {
@@ -42,8 +45,6 @@ export function GameOverOverlay({ game, stats, onPlayAgain, onExit }: Props) {
   const rows: [string, string][] = [
     ["Final score", game.score.toLocaleString()],
     ["Best score", Math.max(stats.bestScore, game.score).toLocaleString()],
-    ["Hands completed", String(game.handsCompleted)],
-    ["Highest round", String(game.round)],
     ["Sets created", String(game.setsCreated)],
     ["Most-used suit", topSuit ? SUIT_NAME[topSuit] : "—"],
   ];
@@ -51,7 +52,11 @@ export function GameOverOverlay({ game, stats, onPlayAgain, onExit }: Props) {
   return (
     <div className="overlay" role="dialog" aria-modal="true" aria-label="Game over">
       <div className="overlay__card">
-        <div className="gameover-word">No moves left</div>
+        <div className="gameover-word">{headline}</div>
+        <div className="gameover-hands">
+          <span className="gameover-hands__n">{hands}</span>
+          <span className="gameover-hands__label">hand{plural} from one wall</span>
+        </div>
         <dl className="summary">
           {rows.map(([k, v]) => (
             <div className="summary__row" key={k}>

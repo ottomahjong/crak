@@ -35,12 +35,29 @@ export function advancedUnlocked(state: Pick<GameState, "round" | "learning">): 
   return !state.learning && state.round >= CONFIG.ADVANCED_ROUND;
 }
 
+/** True when the current hand actually asks for a Kong or a Quint. */
+export function targetWantsKong(target?: Pick<GameState["target"], "requirements">): boolean {
+  return (
+    target?.requirements.some(
+      (r) => !r.filledBy && (r.kind === "number-kong" || r.kind === "number-quint"),
+    ) ?? false
+  );
+}
+
 /**
  * Rules active for a state:
  *  - hand 1 of learning has runs disabled so partials cannot appear before they
  *    are taught;
- *  - Kongs & Quints unlock in endless mode at CONFIG.ADVANCED_ROUND.
+ *  - Kongs & Quints are OPTIONAL. A Pung stays a Pung — the pung→kong→quint
+ *    extension is enabled only when advanced play is unlocked AND the current
+ *    hand actually requires a Kong/Quint, so a player never accidentally spends
+ *    a fourth tile upgrading a set the hand doesn't ask for.
  */
-export function ruleOptsFor(state: Pick<GameState, "learning" | "round">): RuleOptions {
-  return { runs: state.learning !== 1, kongs: advancedUnlocked(state) };
+export function ruleOptsFor(
+  state: Pick<GameState, "learning" | "round"> & { target?: GameState["target"] },
+): RuleOptions {
+  return {
+    runs: state.learning !== 1,
+    kongs: advancedUnlocked(state) && targetWantsKong(state.target),
+  };
 }

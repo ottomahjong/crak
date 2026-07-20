@@ -10,6 +10,7 @@ import { MahjOverlay } from "./MahjOverlay";
 import { GameOverOverlay } from "./GameOverOverlay";
 import { HowSetsWork } from "./HowSetsWork";
 import { LearningIntro } from "./LearningIntro";
+import { Rack } from "./Rack";
 
 type Props = {
   g: UseGame;
@@ -89,6 +90,8 @@ export function GameScreen({ g, onPause, onExit, onOpenStats }: Props) {
           reducedMotion={settings.reducedMotion}
         />
       </div>
+
+      {!learning && <Rack hands={game.rack} />}
 
       {/* Guided-play suggestion + status line. */}
       <div className="status-row" aria-live="polite">
