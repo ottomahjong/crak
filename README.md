@@ -36,7 +36,29 @@ Loose tiles (first release only):
 
 No winds, flowers, or ranks 4–9 in this version.
 
-## Game rules
+## Movement — one swipe = one step
+
+Every swipe moves each eligible tile **exactly one cell** in the chosen
+direction — tiles never slide across the board to the far edge. A tile steps one
+cell into an empty neighbour, **combines** with the neighbour it steps into if
+they match, or **stays put** when blocked by the edge or an incompatible tile. A
+tile takes **one action per swipe** (move *or* combine, never both, never twice),
+and a set formed this swipe stays in its cell until the next swipe. If nothing
+moved or combined, the swipe is invalid: nothing spawns, nothing is punished.
+
+**Directional resolution.** Each row/column is resolved independently, from the
+**leading edge** (the side tiles move toward) to the trailing edge. Leading-first
+is what makes it deterministic and chain-free: by the time a tile is considered,
+the cell ahead is already settled, so it can only step once. All of this lives in
+`game/rules/movement.ts` (`applyMove`); tuning constants (one-cell distance,
+swipe threshold, timings, spawn cadence, undo count) live in `game/config.ts`.
+
+Examples (swipe left): `[_ _ 1 _]` → `[_ 1 _ _]` (one cell). `[1 _ _ _]` → no
+change. `[1·Dot 2·Bam _ _]` → no change (edge + incompatible). `[1 1 _ _]` →
+`[Pair _ _ _]` (adjacent match combines). `[1 _ 1 _]` → `[1 1 _ _]` (steps
+closer; combines on a *later* swipe). `[1 1 1 _]` → `[Pair 1 _ _]` (no chain).
+
+## Combination rules
 
 **Pair** — two identical loose numbered tiles, or two identical dragons, fuse
 into a pair (one cell).
@@ -56,38 +78,36 @@ three‑tile adjacency scan that behaved unlike anything else in the game — se
 a dragon pair → dragon pung. A joker never *starts* a set (no joker pairs, no joker
 partials), never combines with another joker, and never upgrades a finished set.
 
-### Combination‑resolution order (important)
+### The collision primitive
 
-One universal rule: for every valid swipe, each line is resolved from the
-**leading edge** (where tiles pile up) toward the trailing edge, and each tile
-combines with the first neighbour it touches, at most once.
+Every combination is `tryCombine(anchor, incoming)` — the single pairwise rule
+the one-step engine applies when a tile steps into its forward neighbour:
 
-1. Empty cells are removed (tiles compact toward the swipe direction).
-2. Two loose tiles collide: same rank → **pair**; adjacent ranks (same suit) →
-   **partial run**; matching dragons → **dragon pair**.
-3. A **pair** + matching tile (or joker) → **pung**; a **partial run** + the
-   missing rank (or joker) → **run**. These completed sets are terminal.
-4. A set created this move does **not** chain further in the same move.
-5. Completed sets never merge into runs.
+- same rank → **pair**; adjacent ranks (same suit) → **partial run**; matching
+  dragons → **dragon pair**;
+- **pair** + matching tile (or joker) → **pung**; **partial run** + the missing
+  rank (or joker) → **run** (terminal).
 
-The single greedy collision pass is authoritative in `game/rules/combine.ts`.
-During learning hand 1 the run rule is switched off (`RuleOptions.runs`) so
-partial runs cannot appear before they are taught.
+The result carries the anchor's id, so the composite set stays in the neighbour's
+cell. It lives in `game/rules/combine.ts`. During learning hand 1 the run rule is
+switched off (`RuleOptions.runs`) so partial runs can't appear before they're
+taught.
 
-After a valid move the engine, in order: resolves combinations → reconciles the
-target hand → **spawns one new tile unless the move made a combination** →
-updates the score → checks for hand completion → checks whether any legal move
-remains. An **invalid** swipe changes nothing and spawns nothing.
+**Spawn cadence.** Because one-cell movement takes more swipes to line tiles up,
+a tile spawns only after **every 2nd non-combining swipe** (every **3rd** in
+beginner/learning mode). Combining swipes never spawn (they already earn room).
+The new tile enters from the **edge opposite the swipe**, after movement and any
+combination finish, with an entrance slide and a brief "newest" ring. An invalid
+swipe changes nothing and spawns nothing. This spawn rule (Option B in the brief)
+was chosen by simulation over spawning every move — see *Balance & play-testing*.
 
-**Breathing room (why combining skips the spawn).** On a 16-cell board with 13
-tile types, spawning after *every* move floods the grid with un-combinable
-tiles before a four-set hand can be assembled. So any move that makes a
-combination skips that turn's spawn — combining is what buys you room, and
-"dead" slides that only shuffle tiles keep the board advancing. This is the
-central balance lever (see *Balance & play-testing*).
+**Undo.** Up to **three** undos per game (`CONFIG.UNDO_COUNT`), restoring the
+exact board, score, target progress, spawn bag and RNG. Precise one-cell
+placement means accidental swipes are cheap to take back; the remaining count is
+shown on the Undo button. Undo history resets at each Mahj.
 
 The engine lives in pure TypeScript under `game/` and is covered by tests
-(`tests/`). See `game/rules/combine.ts` for the authoritative resolution code.
+(`tests/`). See `game/rules/combine.ts` and `game/rules/movement.ts`.
 
 ## Learning by play (first game)
 

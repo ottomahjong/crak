@@ -9,6 +9,7 @@ import {
   completeHand,
 } from "@/game/state/game";
 import { computeHint, type Hint } from "@/game/hints";
+import { CONFIG } from "@/game/config";
 import {
   loadActiveGame,
   loadSettings,
@@ -29,11 +30,11 @@ export type Overlay = null | "mahj" | "gameover";
 
 export type UseGame = ReturnType<typeof useGame>;
 
-// Three legible phases per swipe (ms). Kept short but ordered.
-const MOVE_MS = 160;
-const MERGE_MS = 180;
-const SPAWN_MS = 160;
-const HINT_DELAY_MS = 1800;
+// Three legible phases per swipe (ms). One-cell moves are short and controlled.
+const MOVE_MS = CONFIG.MOVE_MS;
+const MERGE_MS = CONFIG.MERGE_MS;
+const SPAWN_MS = CONFIG.SPAWN_MS;
+const HINT_DELAY_MS = CONFIG.HINT_DELAY_MS;
 
 export type EvalMetrics = {
   moves: number;

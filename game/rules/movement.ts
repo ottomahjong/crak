@@ -1,14 +1,26 @@
 import type { Board, Direction, Merge, MoveResult, Slide, Tile } from "@/types";
 import { BOARD_SIZE, CELL_COUNT } from "@/types";
-import { resolveLine, type RuleOptions } from "@/game/rules/combine";
+import { tryCombine, type RuleOptions } from "@/game/rules/combine";
 
 // ---------------------------------------------------------------------------
-// Board line geometry
+// Movement model: ONE SWIPE = ONE STEP.
+//
+// Every eligible tile moves at most one cell in the swipe direction. Tiles do
+// not slide across empty space, do not jump or pass through other tiles, and a
+// tile takes exactly one action per swipe (move OR combine, never both, never
+// twice). A set formed this swipe stays put until the next swipe.
+//
+// Each row/column is resolved independently, processed from the LEADING edge
+// (the side tiles move toward) to the trailing edge. Leading-edge-first is what
+// makes the result deterministic and chain-free: by the time a tile is
+// considered, the cell ahead of it has already been finalised, so it either
+// steps into a now-empty cell, combines with the settled tile there, or is
+// blocked — with no possibility of a second hop.
 // ---------------------------------------------------------------------------
 
 /**
  * Returns, for each of the four lines, the ordered cell indices from the
- * LEADING edge (where tiles pile up) to the trailing edge, for a given swipe.
+ * LEADING edge (index 0 = the edge tiles move toward) to the trailing edge.
  */
 export function lineCellsFor(direction: Direction): number[][] {
   const lines: number[][] = [];
@@ -52,40 +64,67 @@ export function applyMove(
   const events: MoveResult["events"] = [];
   let changed = false;
 
-  const lines = lineCellsFor(direction);
+  for (const cells of lineCellsFor(direction)) {
+    // L holds the line's tiles indexed leading(0)→trailing(3).
+    const L: (Tile | null)[] = cells.map((c) => board[c] ?? null);
 
-  for (const cells of lines) {
-    // Gather non-empty tiles in leading→trailing order, remembering origins.
-    const tiles: Tile[] = [];
-    const origin = new Map<string, number>();
-    for (const cell of cells) {
-      const t = board[cell];
-      if (t) {
-        tiles.push(t);
-        origin.set(t.id, cell);
+    // R is the resolved line. fromPos[p] = the original index of the tile now at
+    // R[p] (so we can animate its one-cell slide). locked[p] marks a set formed
+    // THIS swipe, which cannot accept a further tile (no chaining).
+    const R: (Tile | null)[] = [null, null, null, null];
+    const fromPos: (number | null)[] = [null, null, null, null];
+    const locked = [false, false, false, false];
+
+    for (let i = 0; i < BOARD_SIZE; i++) {
+      const t = L[i];
+      if (!t) continue;
+
+      if (i === 0) {
+        // Already at the leading edge — cannot advance; may still receive a
+        // combine from the tile behind it.
+        R[0] = t;
+        fromPos[0] = 0;
+        continue;
+      }
+
+      const d = i - 1; // the single cell this tile could step into
+      const ahead = R[d];
+
+      if (ahead === null) {
+        // Step exactly one cell into the (now-settled) empty cell ahead.
+        R[d] = t;
+        fromPos[d] = i;
+      } else if (!locked[d]) {
+        const combined = tryCombine(ahead, t, opts);
+        if (combined) {
+          // Combine into the forward neighbour; the set keeps the anchor's id
+          // and cell, and is locked against any further combine this swipe.
+          R[d] = combined.tile;
+          locked[d] = true;
+          events.push({ type: combined.event, tile: combined.tile, usedJoker: combined.usedJoker });
+          merges.push({ id: t.id, into: ahead.id, at: cells[d] });
+          changed = true;
+          continue;
+        }
+        // Blocked by an incompatible neighbour — stay put.
+        R[i] = t;
+        fromPos[i] = i;
+      } else {
+        // Neighbour already holds a set formed this swipe — blocked, stay put.
+        R[i] = t;
+        fromPos[i] = i;
       }
     }
 
-    const { items, events: lineEvents } = resolveLine(tiles, opts);
-    events.push(...lineEvents);
-
-    // Place results at leading cells; compute animation deltas.
-    items.forEach((item, p) => {
-      const targetCell = cells[p];
-      next[targetCell] = item.tile;
-
-      const anchorId = item.tile.id;
-      for (const srcId of item.sources) {
-        const fromCell = origin.get(srcId)!;
-        if (srcId === anchorId) {
-          slides.push({ id: srcId, from: fromCell, to: targetCell });
-          if (fromCell !== targetCell) changed = true;
-        } else {
-          merges.push({ id: srcId, into: anchorId, at: targetCell });
-          changed = true; // a merge always changes the board
-        }
-      }
-    });
+    // Commit the line and record surviving-tile slides.
+    for (let p = 0; p < BOARD_SIZE; p++) {
+      const tile = R[p];
+      if (!tile) continue;
+      next[cells[p]] = tile;
+      const from = fromPos[p]!;
+      slides.push({ id: tile.id, from: cells[from], to: cells[p] });
+      if (from !== p) changed = true;
+    }
   }
 
   return { board: next, changed, events, slides, merges };

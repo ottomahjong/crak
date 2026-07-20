@@ -181,9 +181,11 @@ export type GameState = {
   rngState: number;
   /** Recent spawns, used to avoid runaway repeats. */
   recentSpawns: TileTypeId[];
-  /** One free undo per game. */
-  undoAvailable: boolean;
-  undoSnapshot: GameSnapshot | null;
+  /** Up to N free undos per game (see CONFIG.UNDO_COUNT). */
+  undosRemaining: number;
+  undoStack: GameSnapshot[];
+  /** Valid non-combining swipes since the last spawn (drives spawn cadence). */
+  movesSinceSpawn: number;
   elapsedMs: number;
   handsCompleted: number;
   setsCreated: number;
@@ -203,6 +205,7 @@ export type GameSnapshot = {
   bag: TileTypeId[];
   rngState: number;
   recentSpawns: TileTypeId[];
+  movesSinceSpawn: number;
   elapsedMs: number;
   handsCompleted: number;
   setsCreated: number;

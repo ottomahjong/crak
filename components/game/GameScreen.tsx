@@ -63,6 +63,14 @@ export function GameScreen({ g, onPause, onExit, onOpenStats }: Props) {
 
       <TargetHand target={game.target} learning={learning} onExplainOpen={g.noteHelpOpened} />
 
+      {/* Persistent one-step reminder during the first learning hand; fades once
+          the player has demonstrated a few successful swipes. */}
+      {game.learning === 1 && g.swipeCount < 6 && (
+        <p className="step-reminder" aria-hidden>
+          One swipe = one space
+        </p>
+      )}
+
       <div className="board-wrap">
         <Board
           ref={boardRef}
@@ -94,14 +102,15 @@ export function GameScreen({ g, onPause, onExit, onOpenStats }: Props) {
         <button
           className="ctrl-btn"
           onClick={g.doUndo}
-          disabled={!game.undoAvailable}
-          aria-label="Undo last move"
+          disabled={game.undosRemaining <= 0 || game.undoStack.length === 0}
+          aria-label={`Undo, ${game.undosRemaining} left`}
         >
           <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
             <path d="M9 7 L4 12 L9 17" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
             <path d="M4 12 H14 a6 6 0 0 1 0 12 H11" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
           </svg>
-          Undo{game.undoAvailable ? "" : " ✕"}
+          Undo
+          <span className="undo-count" aria-hidden>{game.undosRemaining}</span>
         </button>
         <button
           className="ctrl-btn"

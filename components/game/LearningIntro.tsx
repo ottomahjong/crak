@@ -8,9 +8,9 @@ const CARDS: Record<LearningStage, { title: string; lines: string[]; goal: strin
   1: {
     title: "Hand 1 — Match tiles",
     lines: [
-      "Swipe to move every tile at once.",
-      "Slide two matching tiles together to make a PAIR.",
-      "Add a third to make a PUNG.",
+      "Each swipe moves tiles ONE space.",
+      "Nudge two matching tiles next to each other, then swipe again to make a PAIR.",
+      "Add a third matching tile to make a PUNG.",
     ],
     goal: "Goal: one Pair and one Pung.",
   },
@@ -18,7 +18,7 @@ const CARDS: Record<LearningStage, { title: string; lines: string[]; goal: strin
     title: "Hand 2 — Build a Run",
     lines: [
       "New this hand: Bams.",
-      "Join 1 and 2 of a suit to start a run…",
+      "Bring 1 and 2 of a suit together to start a run…",
       "…then add the 3 to complete the RUN.",
     ],
     goal: "Goal: a Pair, a Pung and a Run.",

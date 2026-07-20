@@ -1,6 +1,7 @@
 import type { Board, CombineEvent, Direction, GameState, TargetPattern, Tile, TileTypeId } from "@/types";
-import { createInitialState, move, completeHand } from "@/game/state/game";
+import { createInitialState, move, completeHand, ruleOptsFor } from "@/game/state/game";
 import { applyMove } from "@/game/rules/movement";
+import { tryCombine, type RuleOptions } from "@/game/rules/combine";
 import { reconcileTargets } from "@/game/rules/targets";
 import { tileTypeOf } from "@/game/tiles";
 
@@ -54,8 +55,34 @@ function potential(board: Board): number {
   return p;
 }
 
+/**
+ * Under ONE-STEP movement a swipe rarely combines unless tiles are already
+ * adjacent, so a good player MANOEUVRES matching tiles together over several
+ * moves. This term rewards combinable tiles being close, guiding the greedy AI
+ * to line them up — the essential skill the new movement model asks for.
+ */
+export function proximityScore(board: Board, opts: RuleOptions): number {
+  const tiles: { t: Tile; r: number; c: number }[] = [];
+  board.forEach((t, i) => {
+    if (t) tiles.push({ t, r: Math.floor(i / 4), c: i % 4 });
+  });
+  let p = 0;
+  for (let i = 0; i < tiles.length; i++) {
+    for (let j = i + 1; j < tiles.length; j++) {
+      const a = tiles[i];
+      const b = tiles[j];
+      if (tryCombine(a.t, b.t, opts) || tryCombine(b.t, a.t, opts)) {
+        const dist = Math.abs(a.r - b.r) + Math.abs(a.c - b.c);
+        p += Math.max(0, 5 - dist); // adjacent(1)=4 … far=0
+      }
+    }
+  }
+  return p;
+}
+
 function evaluate(state: GameState, dir: Direction): number | null {
-  const res = applyMove(state.board, dir);
+  const opts = ruleOptsFor(state);
+  const res = applyMove(state.board, dir, opts);
   if (!res.changed) return null;
   const rec = reconcileTargets(state.target, res.board);
   const slotGain = filledCount(rec.target) - filledCount(state.target);
@@ -64,6 +91,7 @@ function evaluate(state: GameState, dir: Direction): number | null {
   const empties = rec.board.filter((c) => c === null).length;
   score += empties * 10;
   score += potential(rec.board);
+  score += proximityScore(rec.board, opts) * 3;
 
   // A good player avoids making completed sets the current hand doesn't need —
   // surplus sets are permanent clutter until a future hand happens to want them.

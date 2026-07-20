@@ -1,4 +1,5 @@
 import type { GameState, Settings, Stats } from "@/types";
+import { CONFIG } from "@/game/config";
 
 // ---------------------------------------------------------------------------
 // Versioned local storage. No accounts, no backend — everything lives on the
@@ -72,7 +73,7 @@ function migrate(data: Partial<Persisted>): Persisted {
     suitCounts: { ...DEFAULT_STATS.suitCounts, ...(data.stats?.suitCounts ?? {}) },
   };
   let active: GameState | null = null;
-  if (data.active && validActive(data.active)) active = data.active;
+  if (data.active && validActive(data.active)) active = migrateActive(data.active);
   return { version: SCHEMA_VERSION, settings, stats, active };
 }
 
@@ -80,6 +81,24 @@ function validActive(g: unknown): g is GameState {
   if (!g || typeof g !== "object") return false;
   const s = g as GameState;
   return Array.isArray(s.board) && s.board.length === 16 && typeof s.score === "number" && !!s.target;
+}
+
+/**
+ * Bring an active game forward to the current schema. The board/tile format is
+ * unchanged by the one-step movement update — a saved game stays playable — but
+ * older saves predate the undo-stack and spawn-cadence fields, so we fill them
+ * in (granting a fresh set of undos) rather than discarding the game.
+ */
+function migrateActive(g: GameState): GameState {
+  const legacy = g as GameState & { undoAvailable?: boolean; undoSnapshot?: unknown };
+  return {
+    ...g,
+    undosRemaining: typeof g.undosRemaining === "number" ? g.undosRemaining : CONFIG.UNDO_COUNT,
+    undoStack: Array.isArray(g.undoStack) ? g.undoStack : [],
+    movesSinceSpawn: typeof g.movesSinceSpawn === "number" ? g.movesSinceSpawn : 0,
+    // drop legacy single-undo fields if present
+    ...(legacy.undoAvailable !== undefined ? { undoAvailable: undefined } : {}),
+  } as GameState;
 }
 
 function write(next: Persisted) {

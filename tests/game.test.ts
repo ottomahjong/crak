@@ -21,11 +21,11 @@ describe("initial state", () => {
   it("starts with a handful of loose tiles and the opening pattern", () => {
     const s = freshState();
     const count = s.board.filter(Boolean).length;
-    expect(count).toBe(4);
+    expect(count).toBe(3); // CONFIG.INITIAL_TILES — more empty space
     expect(s.target.id).toBe("OPEN");
     expect(s.score).toBe(0);
     expect(s.round).toBe(1);
-    expect(s.undoAvailable).toBe(true);
+    expect(s.undosRemaining).toBe(3);
   });
 
   it("is reproducible from a seed", () => {
@@ -38,23 +38,25 @@ describe("initial state", () => {
 });
 
 describe("move", () => {
-  it("spawns a tile on a non-combining slide, but not on a combining move", () => {
-    // A pure slide (no combination) spawns exactly one tile.
-    let slide = freshState();
+  it("spawns every N non-combining slides (cadence), not on a combining move", () => {
+    // Non-combining slides accumulate; a spawn lands on the 2nd (normal cadence).
+    let s = freshState();
     const b1 = emptyBoard();
-    b1[0] = mkLoose("dot-1");
-    b1[2] = mkLoose("bam-3"); // different tiles, no merge, they just slide
-    slide = { ...slide, board: b1 };
-    const slid = move(slide, "left");
-    expect(slid.changed).toBe(true);
-    expect(slid.events).toHaveLength(0);
-    expect(slid.spawnedTile).not.toBeNull();
+    b1[3] = mkLoose("dot-1"); // will step left one cell each swipe
+    s = { ...s, board: b1, movesSinceSpawn: 0 };
+    const m1 = move(s, "left");
+    expect(m1.changed).toBe(true);
+    expect(m1.events).toHaveLength(0);
+    expect(m1.spawnedTile).toBeNull(); // first slide: no spawn yet
+    const m2 = move(m1.state, "left");
+    expect(m2.changed).toBe(true);
+    expect(m2.spawnedTile).not.toBeNull(); // second slide: spawns
 
-    // A combining move consumes tiles and skips the spawn (breathing room).
+    // A combining move never spawns (breathing room).
     let combo = freshState();
     const b2 = emptyBoard();
     b2[0] = mkLoose("dot-1");
-    b2[1] = mkLoose("dot-1"); // will pair
+    b2[1] = mkLoose("dot-1"); // adjacent → pair on swipe left
     combo = { ...combo, board: b2 };
     const merged = move(combo, "left");
     expect(merged.changed).toBe(true);
@@ -85,23 +87,47 @@ describe("move", () => {
   });
 });
 
-describe("undo", () => {
-  it("restores the previous state once", () => {
-    let s = freshState(2);
+describe("undo (three per game)", () => {
+  function firstChangingMove(s: GameState) {
     const dirs = ["left", "right", "up", "down"] as const;
-    let out = move(s, "left");
-    let d = 1;
-    while (!out.changed && d < 4) {
-      out = move(s, dirs[d]);
-      d++;
+    for (const d of dirs) {
+      const out = move(s, d);
+      if (out.changed) return out;
     }
+    return move(s, "left");
+  }
+
+  it("restores the exact previous state and decrements the count", () => {
+    const s = freshState(2);
+    const out = firstChangingMove(s);
     expect(out.changed).toBe(true);
+    expect(out.state.undosRemaining).toBe(3);
     const undone = undo(out.state);
     expect(undone.board.filter(Boolean).length).toBe(s.board.filter(Boolean).length);
-    expect(undone.undoAvailable).toBe(false);
-    // Second undo is a no-op.
-    const again = undo(undone);
-    expect(again).toBe(undone);
+    expect(undone.score).toBe(s.score);
+    expect(undone.undosRemaining).toBe(2);
+  });
+
+  it("allows up to three undos, then stops", () => {
+    let s = freshState(9);
+    // Make three changing moves.
+    for (let i = 0; i < 3; i++) {
+      const out = firstChangingMove(s);
+      if (!out.changed) break;
+      s = out.state;
+    }
+    let count = 0;
+    while (s.undosRemaining > 0 && s.undoStack.length > 0) {
+      const before = s.undosRemaining;
+      s = undo(s);
+      expect(s.undosRemaining).toBe(before - 1);
+      count += 1;
+      if (count > 5) break;
+    }
+    expect(count).toBeLessThanOrEqual(3);
+    // Further undo is a no-op.
+    const again = undo(s);
+    expect(again).toBe(s);
   });
 });
 

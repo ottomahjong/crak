@@ -9,6 +9,7 @@ import {
 import { entryEdgeFor, entryLinesFor } from "@/game/rules/movement";
 import { computeHint } from "@/game/hints";
 import { applyMove } from "@/game/rules/movement";
+import { tryCombine } from "@/game/rules/combine";
 import { tileTypeOf } from "@/game/tiles";
 import type { Direction, GameState, TileTypeId } from "@/types";
 import { reconcileTargets } from "@/game/rules/targets";
@@ -28,14 +29,12 @@ describe("edge spawning", () => {
     expect(entryLinesFor("up")[0]).toEqual([12, 13, 14, 15]);
   });
 
-  it("a non-combining swipe spawns on the opposite edge", () => {
-    // Learning hand 2 (dots+bams) so we control the pool; craft a pure slide.
+  it("a spawning swipe enters from the opposite edge", () => {
+    // Learning hand 2 (dots+bams); craft a pure slide, drive past the cadence.
     let s = createInitialState(42, 2);
-    // Force a simple board: one tile that will slide left, no merges.
     const board = new Array(16).fill(null);
-    board[1] = { id: "a", state: "loose", suit: "dot", rank: 1 };
-    board[2] = { id: "b", state: "loose", suit: "bam", rank: 3 };
-    s = { ...s, board };
+    board[3] = { id: "a", state: "loose", suit: "dot", rank: 1 }; // steps left
+    s = { ...s, board, movesSinceSpawn: 99 }; // force a spawn on the next slide
     const out = move(s, "left");
     expect(out.changed).toBe(true);
     expect(out.spawnedTile).not.toBeNull();
@@ -96,11 +95,13 @@ describe("learning tile pools", () => {
     expect(res.events).toHaveLength(0); // 1+2 slide past, no partial
   });
 
-  it("hand 1 starts with a first pair one move away", () => {
+  it("hand 1 reaches a first pair in two one-step swipes", () => {
     const s = createInitialState(999, 1);
-    // Two 1-dots on the same row → left swipe pairs them.
-    const out = move(s, "left");
-    expect(out.events.some((e) => e.type === "pair")).toBe(true);
+    // Two 1-dots two cells apart: swipe once to bring them adjacent, again to pair.
+    const first = move(s, "left");
+    expect(first.events.some((e) => e.type === "pair")).toBe(false);
+    const second = move(first.state, "left");
+    expect(second.events.some((e) => e.type === "pair")).toBe(true);
   });
 });
 
@@ -158,14 +159,8 @@ describe("guided hints legality", () => {
   });
 });
 
-// Mirror of the collision table for test verification.
+// A hint is legal iff the two tiles can combine (in either role) under the
+// one-step collision primitive.
 function pairCanCombine(a: import("@/types").Tile, b: import("@/types").Tile): boolean {
-  const res = applyMove(placeAdjacent(a, b), "left");
-  return res.events.length > 0;
-}
-function placeAdjacent(a: import("@/types").Tile, b: import("@/types").Tile) {
-  const board = new Array(16).fill(null);
-  board[1] = a;
-  board[2] = b;
-  return board;
+  return tryCombine(a, b) !== null || tryCombine(b, a) !== null;
 }

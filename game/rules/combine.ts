@@ -40,17 +40,6 @@ import {
 // The two-stage run replaced an earlier three-tile adjacency scan: runs now
 // follow the exact same physics as pair→pung, which is the point.
 
-export type ResolveItem = {
-  tile: Tile;
-  /** All input tile ids that produced this item (first = anchor/leading). */
-  sources: string[];
-};
-
-export type ResolveResult = {
-  items: ResolveItem[];
-  events: CombineEvent[];
-};
-
 export type RuleOptions = {
   /** When false, partial-run and run merges are disabled (learning hand 1). */
   runs?: boolean;
@@ -165,32 +154,25 @@ function tryMerge2(a: Tile, b: Tile, opts: RuleOptions): MergeSpec | null {
   return null;
 }
 
+export type Combined = {
+  /** The resulting set, carrying `anchor.id` so it stays where the anchor was. */
+  tile: Tile;
+  event: CombineEvent["type"];
+  usedJoker: boolean;
+};
+
 /**
- * Resolve a single line of tiles (leading→trailing order, no empty cells).
- * A single greedy pass: each tile may combine with its immediate neighbor at
- * most once. Results of a merge never chain within the same move.
+ * Attempt to combine an `incoming` tile that is moving INTO an `anchor` tile
+ * (the forward neighbour in the swipe direction). The result keeps the anchor's
+ * id so the composite set stays in the anchor's cell. Order-independent for
+ * identity; returns null when the two cannot combine.
+ *
+ * This is the ONLY combination primitive under one-step movement: a tile
+ * combines with the single cell it steps into, never with a tile several cells
+ * away, and never more than once per swipe.
  */
-export function resolveLine(input: Tile[], opts: RuleOptions = {}): ResolveResult {
-  const events: CombineEvent[] = [];
-  const items: ResolveItem[] = [];
-
-  let i = 0;
-  while (i < input.length) {
-    const a = input[i];
-    const b = input[i + 1];
-    if (b) {
-      const spec = tryMerge2(a, b, opts);
-      if (spec) {
-        const tile = spec.make(a.id); // anchor = leading source id
-        items.push({ tile, sources: [a.id, b.id] });
-        events.push({ type: spec.event, tile, usedJoker: spec.usedJoker });
-        i += 2;
-        continue;
-      }
-    }
-    items.push({ tile: a, sources: [a.id] });
-    i += 1;
-  }
-
-  return { items, events };
+export function tryCombine(anchor: Tile, incoming: Tile, opts: RuleOptions = {}): Combined | null {
+  const spec = tryMerge2(anchor, incoming, opts);
+  if (!spec) return null;
+  return { tile: spec.make(anchor.id), event: spec.event, usedJoker: spec.usedJoker };
 }

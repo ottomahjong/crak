@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import type { Direction } from "@/types";
+import { CONFIG } from "@/game/config";
 
 type Options = {
   onSwipe: (dir: Direction) => void;
@@ -11,9 +12,15 @@ type Options = {
 
 /**
  * Pointer/touch swipe recognition for the board, plus arrow + WASD keys.
- * Prevents the page from scrolling while a swipe is in progress over the board.
+ * Requires a clear directional swipe past CONFIG.SWIPE_THRESHOLD_PX, resolves by
+ * the dominant axis, fires at most once per gesture (a tap never fires), and
+ * prevents the page from scrolling while a swipe is in progress over the board.
  */
-export function useSwipe<T extends HTMLElement>({ onSwipe, enabled = true, threshold = 22 }: Options) {
+export function useSwipe<T extends HTMLElement>({
+  onSwipe,
+  enabled = true,
+  threshold = CONFIG.SWIPE_THRESHOLD_PX,
+}: Options) {
   const ref = useRef<T | null>(null);
   const start = useRef<{ x: number; y: number } | null>(null);
   const fired = useRef(false);

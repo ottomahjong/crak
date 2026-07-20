@@ -284,8 +284,9 @@ a:focus-visible {
 .crak-tile {
   position: absolute;
   border-radius: var(--radius-tile);
-  transition: left 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    top 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* One-cell move: short, controlled, no long slide across the board. */
+  transition: left 130ms cubic-bezier(0.3, 0.7, 0.3, 1),
+    top 130ms cubic-bezier(0.3, 0.7, 0.3, 1);
   will-change: left, top;
   padding: 3px;
 }
@@ -380,6 +381,20 @@ a:focus-visible {
   border-radius: 12px; padding: 10px 16px; min-height: 44px; font-weight: 600; cursor: pointer;
 }
 .ctrl-btn:disabled { opacity: 0.4; }
+.undo-count {
+  display: inline-grid; place-items: center;
+  min-width: 18px; height: 18px; padding: 0 4px; margin-left: 2px;
+  border-radius: 9px; background: var(--accent); color: #201a08;
+  font-size: 0.72rem; font-weight: 800; font-variant-numeric: tabular-nums;
+}
+.ctrl-btn:disabled .undo-count { background: var(--text-dim); color: var(--panel); }
+
+/* Persistent one-step reminder during early learning. */
+.step-reminder {
+  text-align: center; margin: 0 0 4px;
+  font-size: 0.78rem; font-weight: 700; letter-spacing: 0.5px;
+  color: var(--accent);
+}
 
 /* ------------------------------------------------------------------ */
 /* Overlays                                                            */

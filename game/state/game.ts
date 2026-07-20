@@ -31,8 +31,7 @@ import {
   OPENING_PATTERN_ID,
 } from "@/data/targets";
 import { makeLooseFromType } from "@/game/tiles";
-
-const STARTING_TILES = 4;
+import { CONFIG, spawnEvery } from "@/game/config";
 /** Minimum tiles the board must hold after a hand cashes in, to stay playable. */
 const MIN_TILES_AFTER_HAND = 4;
 
@@ -81,6 +80,7 @@ export function snapshot(state: GameState): GameSnapshot {
     bag: [...state.bag],
     rngState: state.rngState,
     recentSpawns: [...state.recentSpawns],
+    movesSinceSpawn: state.movesSinceSpawn,
     elapsedMs: state.elapsedMs,
     handsCompleted: state.handsCompleted,
     setsCreated: state.setsCreated,
@@ -105,12 +105,13 @@ export function restoreSnapshot(state: GameState, snap: GameSnapshot): GameState
     bag: [...snap.bag],
     rngState: snap.rngState,
     recentSpawns: [...snap.recentSpawns],
+    movesSinceSpawn: snap.movesSinceSpawn,
     elapsedMs: snap.elapsedMs,
     handsCompleted: snap.handsCompleted,
     setsCreated: snap.setsCreated,
     suitCounts: { ...snap.suitCounts },
     learning: snap.learning,
-    // Undo is consumed by the caller.
+    // Undo bookkeeping is managed by the caller (undo()).
   };
 }
 
@@ -261,14 +262,17 @@ export function createInitialState(
   rngState = primed.rngState;
 
   if (learning === 1) {
-    // Fixed opening layout for the very first hand: the two 1 Dots pair up on
-    // the player's first left or right swipe — the first "aha" is one move away.
-    board[4] = makeLooseFromType("dot-1"); // row 1, col 0
-    board[7] = makeLooseFromType("dot-1"); // row 1, col 3
-    board[2] = makeLooseFromType("dot-2"); // row 0, col 2
-    board[13] = makeLooseFromType("dot-2"); // row 3, col 1
+    // Fixed opening for the very first hand, tuned for ONE-STEP movement: the
+    // two 1 Dots are two cells apart in a row, so the player learns "one swipe =
+    // one space" (bring them adjacent) then "swipe again to combine" — the
+    // first pair in ~2 swipes. Two 2 Dots seed the pung.
+    board[4] = makeLooseFromType("dot-1"); // row 1, col 0 (at the edge)
+    board[6] = makeLooseFromType("dot-1"); // row 1, col 2
+    board[9] = makeLooseFromType("dot-2"); // row 2, col 1
+    board[11] = makeLooseFromType("dot-2"); // row 2, col 3
   } else {
-    for (let i = 0; i < STARTING_TILES; i++) {
+    const count = learning ? CONFIG.INITIAL_TILES_BEGINNER : CONFIG.INITIAL_TILES;
+    for (let i = 0; i < count; i++) {
       const out = spawnOne(board, target, bag, rngState, recentSpawns, undefined, allowed);
       board = out.board;
       bag = out.bag;
@@ -288,8 +292,9 @@ export function createInitialState(
     bag,
     rngState,
     recentSpawns,
-    undoAvailable: true,
-    undoSnapshot: null,
+    movesSinceSpawn: 0,
+    undosRemaining: CONFIG.UNDO_COUNT,
+    undoStack: [],
     elapsedMs: 0,
     handsCompleted: 0,
     setsCreated: 0,
@@ -371,22 +376,27 @@ export function move(state: GameState, direction: Direction): MoveOutcome {
   const reconciled = reconcileTargets(state.target, raw.board);
   scoreDelta += reconciled.newlyFilled.length * SCORING.targetSlot;
 
-  // Spawn one new tile — UNLESS this move made a combination. Combining is what
-  // buys breathing room on a 16-cell board: skilful merges hold the flood back,
-  // while "dead" slides that only shuffle tiles keep the board advancing. This
-  // is the key lever that lets a player assemble a four-set hand before the
-  // board chokes on un-combinable loose tiles.
+  // Spawn cadence under ONE-STEP movement. Combining moves never spawn (they
+  // already earn breathing room). Non-combining valid moves accumulate toward a
+  // spawn every N moves (N larger in beginner mode), so the slower one-cell
+  // shuffling that lines tiles up doesn't flood the board.
   const combined = raw.events.length > 0;
-  const spawn = combined
-    ? {
-        board: reconciled.board,
-        bag: state.bag,
-        rngState: state.rngState,
-        recentSpawns: state.recentSpawns,
-        spawnedCell: null,
-        spawnedTile: null,
-      }
-    : spawnOne(
+  const noSpawn = {
+    board: reconciled.board,
+    bag: state.bag,
+    rngState: state.rngState,
+    recentSpawns: state.recentSpawns,
+    spawnedCell: null as number | null,
+    spawnedTile: null as Tile | null,
+  };
+
+  let movesSinceSpawn = state.movesSinceSpawn;
+  let spawn = noSpawn;
+  if (!combined) {
+    movesSinceSpawn += 1;
+    const cadence = spawnEvery(state.learning ? "beginner" : "normal");
+    if (movesSinceSpawn >= cadence) {
+      spawn = spawnOne(
         reconciled.board,
         reconciled.target,
         state.bag,
@@ -395,12 +405,18 @@ export function move(state: GameState, direction: Direction): MoveOutcome {
         direction,
         learningPool(state.learning),
       );
+      if (spawn.spawnedTile) movesSinceSpawn = 0;
+    }
+  }
 
   const handCompleted = reconciled.complete;
   const gameOver =
     !handCompleted &&
     emptyCells(spawn.board).length === 0 &&
     !hasAnyMove(spawn.board, ruleOpts);
+
+  // Undo history: push the pre-move snapshot, bounded to the free-undo count.
+  const undoStack = [...state.undoStack, snap].slice(-CONFIG.UNDO_COUNT);
 
   const nextState: GameState = {
     ...state,
@@ -410,11 +426,11 @@ export function move(state: GameState, direction: Direction): MoveOutcome {
     bag: spawn.bag,
     rngState: spawn.rngState,
     recentSpawns: spawn.recentSpawns,
+    movesSinceSpawn,
     setsCreated,
     suitCounts,
     status: handCompleted ? "won-hand" : gameOver ? "game-over" : "playing",
-    undoAvailable: state.undoAvailable,
-    undoSnapshot: state.undoAvailable ? snap : state.undoSnapshot,
+    undoStack,
   };
 
   return {
@@ -451,10 +467,21 @@ function entryEdgeForSwipe(direction: Direction): Direction {
 // Undo
 // ---------------------------------------------------------------------------
 
+/** True if the player can still undo (has undos left and history to restore). */
+export function canUndo(state: GameState): boolean {
+  return state.undosRemaining > 0 && state.undoStack.length > 0;
+}
+
 export function undo(state: GameState): GameState {
-  if (!state.undoAvailable || !state.undoSnapshot) return state;
-  const restored = restoreSnapshot(state, state.undoSnapshot);
-  return { ...restored, undoAvailable: false, undoSnapshot: null };
+  if (!canUndo(state)) return state;
+  const stack = [...state.undoStack];
+  const snap = stack.pop()!;
+  const restored = restoreSnapshot(state, snap);
+  return {
+    ...restored,
+    undoStack: stack,
+    undosRemaining: state.undosRemaining - 1,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -554,6 +581,9 @@ export function completeHand(state: GameState): HandCompletionResult {
     bag,
     rngState,
     recentSpawns,
+    movesSinceSpawn: 0,
+    // A new hand starts a fresh undo history (can't undo across a Mahj).
+    undoStack: [],
     status: "playing",
   };
 

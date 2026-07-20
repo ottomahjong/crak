@@ -33,7 +33,7 @@ export function HowSetsWork({ onClose }: { onClose: () => void }) {
     <div className="overlay" role="dialog" aria-modal="true" aria-label="How sets work">
       <div className="overlay__card hsw">
         <h2 className="hsw__title">How sets work</h2>
-        <p className="hsw__sub">Slide tiles together. Matching tiles combine.</p>
+        <p className="hsw__sub">Each swipe moves tiles one space. Matching tiles that meet combine.</p>
 
         <div className="hsw__rows">
           <div className="hsw-row">
